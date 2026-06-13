@@ -1,0 +1,19 @@
+@import "tailwindcss";
+
+@theme {
+  --color-pkf-navy: #1b3a6b;
+  --color-pkf-navy-dark: #122850;
+  --color-pkf-magenta: #c2127a;
+  --color-pkf-red: #d6231e;
+  --color-pkf-orange: #f5821f;
+  --color-pkf-lime: #c4d600;
+  --color-pkf-green: #3aa635;
+  --color-pkf-cyan: #28b6e5;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, 'Segoe UI', Roboto, sans-serif;
+  background-color: #f4f6fa;
+  color: #1f2533;
+}
