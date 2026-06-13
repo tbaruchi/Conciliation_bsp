@@ -6,6 +6,11 @@ Aplicação web para automação das conciliações da empresa, com abas para Ba
 
 - `client/` — Frontend em React + Vite + Tailwind CSS
 - `server/` — Backend em Node.js + Express, responsável por processar os arquivos e executar a conciliação
+- `offline/index.html` — Versão em página única (HTML/CSS/JS), sem dependência de servidor. Basta abrir o arquivo em um navegador (Chrome/Edge) para usar offline.
+
+## Versão offline (página única)
+
+Abra `offline/index.html` diretamente no navegador — não requer instalação, internet ou backend. Toda a leitura de Excel/PDF, a conciliação e a geração do Excel de resultado são feitas localmente no navegador.
 
 ## Como executar
 
