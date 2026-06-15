@@ -49,4 +49,19 @@ Ao clicar em **Iniciar Conciliação**, o sistema compara os lançamentos por va
 
 O resultado pode ser exportado para Excel pelo botão **Exportar para Excel**.
 
-As abas **Clientes**, **Fornecedores** e **Impostos** estão em desenvolvimento.
+## Conciliação de Fornecedores
+
+Na aba **Fornecedores**, envie:
+
+1. **Balancete Contábil** (Excel `.xlsx`/`.xls`) — deve conter colunas de Conta Contábil e Saldo/Total.
+2. **Planilha de Fornecedores** (Excel `.xlsx`/`.xls`) — deve conter colunas de Fornecedor, Conta Contábil e Total.
+
+Ao clicar em **Iniciar Conciliação**, o sistema compara, para cada conta contábil, o saldo do balancete com o total da planilha de fornecedores, apontando:
+
+- Fornecedores conciliados (saldo do balancete igual ao total da planilha)
+- Fornecedores com diferença de valor entre o balancete e a planilha
+- Contas presentes apenas no balancete ou apenas na planilha de fornecedores
+
+O resultado pode ser exportado para Excel pelo botão **Exportar para Excel**.
+
+As abas **Clientes** e **Impostos** estão em desenvolvimento.

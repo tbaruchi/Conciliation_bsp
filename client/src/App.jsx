@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import logo from './assets/pkf-logo.png';
 import BankReconciliation from './components/BankReconciliation';
+import SupplierReconciliation from './components/SupplierReconciliation';
 import ComingSoon from './components/ComingSoon';
 
 const TABS = [
@@ -54,7 +55,7 @@ function App() {
       <main className="max-w-6xl mx-auto w-full px-6 py-8 flex-1">
         {activeTab === 'banco' && <BankReconciliation />}
         {activeTab === 'clientes' && <ComingSoon title="Conciliação de Clientes" />}
-        {activeTab === 'fornecedores' && <ComingSoon title="Conciliação de Fornecedores" />}
+        {activeTab === 'fornecedores' && <SupplierReconciliation />}
         {activeTab === 'impostos' && <ComingSoon title="Conciliação de Impostos" />}
       </main>
 

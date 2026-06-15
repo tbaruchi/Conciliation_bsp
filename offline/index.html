@@ -271,6 +271,7 @@
   }
   .badge.orange { border-color: rgba(245,130,31,0.3); background: rgba(245,130,31,0.1); color: var(--pkf-orange); }
   .badge.magenta { border-color: rgba(194,18,122,0.3); background: rgba(194,18,122,0.1); color: var(--pkf-magenta); }
+  .badge.cyan { border-color: rgba(40,182,229,0.3); background: rgba(40,182,229,0.1); color: var(--pkf-cyan); }
 
   .empty-msg {
     text-align: center;
@@ -424,10 +425,65 @@
 
     <!-- Aba Fornecedores -->
     <section id="tab-fornecedores" hidden>
-      <div class="card dev-card">
+      <div class="card">
         <h2>Conciliação de Fornecedores</h2>
-        <div class="dev-badge">🚧 Em desenvolvimento</div>
-        <p class="desc">Esta conciliação ainda está sendo desenvolvida e estará disponível em breve.</p>
+        <p class="subtitle">Envie o balancete contábil e a planilha de fornecedores para identificar as diferenças por fornecedor, comparando a coluna Total da planilha de fornecedores com o saldo da respectiva conta contábil.</p>
+
+        <div class="upload-row">
+          <div class="upload-field">
+            <label class="field-label" for="file-balancete">Balancete Contábil</label>
+            <label class="dropzone" for="file-balancete" id="dropzone-balancete">
+              <span class="icon">📄</span>
+              <span class="hint-main" id="balancete-hint">Clique para selecionar o arquivo</span>
+              <span class="hint-sub" id="balancete-subhint">Excel (.xlsx, .xls)</span>
+              <input type="file" id="file-balancete" accept=".xlsx,.xls" />
+            </label>
+          </div>
+          <div class="upload-field">
+            <label class="field-label" for="file-suppliers">Planilha de Fornecedores</label>
+            <label class="dropzone" for="file-suppliers" id="dropzone-suppliers">
+              <span class="icon">📄</span>
+              <span class="hint-main" id="suppliers-hint">Clique para selecionar o arquivo</span>
+              <span class="hint-sub" id="suppliers-subhint">Excel (.xlsx, .xls)</span>
+              <input type="file" id="file-suppliers" accept=".xlsx,.xls" />
+            </label>
+          </div>
+        </div>
+
+        <button class="btn btn-primary" id="btn-reconcile-suppliers" disabled>Iniciar Conciliação</button>
+
+        <div class="alert-error" id="error-box-suppliers" hidden></div>
+      </div>
+
+      <div id="results-suppliers" hidden>
+        <div class="card" style="padding:0; background:transparent; border:none; box-shadow:none;">
+          <div class="summary-grid">
+            <div class="summary-card green">
+              <p class="label">Conciliados</p>
+              <p class="value" id="summary-supplier-matched">0</p>
+            </div>
+            <div class="summary-card orange">
+              <p class="label">Com Diferença</p>
+              <p class="value" id="summary-supplier-differences">0</p>
+            </div>
+            <div class="summary-card magenta">
+              <p class="label">Fornecedores</p>
+              <p class="value" id="summary-supplier-total">0</p>
+            </div>
+            <div class="summary-card cyan">
+              <p class="label">Diferença Total</p>
+              <p class="value" id="summary-supplier-difference">R$ 0,00</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="results-header">
+            <h3 id="diff-title-suppliers">Diferenças por Fornecedor (0)</h3>
+            <button class="btn btn-export" id="btn-export-suppliers">📥 Exportar para Excel</button>
+          </div>
+          <div id="diff-table-wrap-suppliers" class="overflow-x"></div>
+        </div>
       </div>
     </section>
 
@@ -1112,6 +1168,360 @@ document.getElementById('btn-export').addEventListener('click', () => {
     URL.revokeObjectURL(url);
   } catch (err) {
     showError('Erro ao gerar o arquivo Excel.');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '📥 Exportar para Excel';
+  }
+});
+
+/* ===================== Conciliação de Fornecedores ===================== */
+
+const ACCOUNT_KEYS = [
+  'conta',
+  'conta contabil',
+  'cod conta',
+  'cod. conta',
+  'codigo',
+  'codigo conta',
+  'codigo da conta',
+  'conta reduzida',
+  'cta',
+  'classificacao',
+];
+const NAME_KEYS = [
+  'fornecedor',
+  'nome fornecedor',
+  'nome do fornecedor',
+  'razao social',
+  'nome',
+  'descricao',
+  'nome da conta',
+  'titulo da conta',
+  'historico',
+  'cliente',
+];
+const ACCOUNT_VALUE_KEYS = [
+  'total',
+  'valor total',
+  'saldo',
+  'saldo atual',
+  'saldo final',
+  'saldo atual (r$)',
+  'saldo final (r$)',
+  'saldo (r$)',
+  'valor atual',
+  'valor',
+  'montante',
+];
+
+function normalizeAccountCode(code) {
+  const digits = stripAccents(String(code ?? '')).toUpperCase().replace(/[^A-Z0-9]/g, '');
+  return digits.replace(/^0+(?=.)/, '');
+}
+
+function findAccountHeaderRow(rows) {
+  for (let i = 0; i < Math.min(rows.length, 20); i++) {
+    const row = rows[i] || [];
+    const normalized = row.map((c) => normalizeKey(c));
+    const hasAccount = normalized.some((c) => ACCOUNT_KEYS.includes(c));
+    const hasValue = normalized.some((c) => ACCOUNT_VALUE_KEYS.includes(c));
+    if (hasAccount && hasValue) return i;
+  }
+  return -1;
+}
+
+function buildAccountColumnMap(headerRow) {
+  const map = {};
+  headerRow.forEach((cell, idx) => {
+    const key = normalizeKey(cell);
+    if (ACCOUNT_KEYS.includes(key) && map.account === undefined) map.account = idx;
+    else if (NAME_KEYS.includes(key) && map.name === undefined) map.name = idx;
+    else if (ACCOUNT_VALUE_KEYS.includes(key) && map.value === undefined) map.value = idx;
+  });
+  return map;
+}
+
+function findAccountDataSheet(workbook) {
+  for (const sheetName of workbook.SheetNames) {
+    const sheet = workbook.Sheets[sheetName];
+    const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true, defval: '' });
+    const headerIdx = findAccountHeaderRow(rows);
+    if (headerIdx !== -1) return { rows, headerIdx };
+  }
+  return null;
+}
+
+function parseAccountBalances(arrayBuffer) {
+  const workbook = XLSX.read(arrayBuffer, { type: 'array', cellDates: false });
+
+  const dataSheet = findAccountDataSheet(workbook);
+  if (!dataSheet) {
+    throw new Error('Não foi possível identificar as colunas de Conta e Total/Saldo na planilha.');
+  }
+  const { rows, headerIdx } = dataSheet;
+
+  const columnMap = buildAccountColumnMap(rows[headerIdx]);
+  const entries = [];
+
+  for (let i = headerIdx + 1; i < rows.length; i++) {
+    const row = rows[i];
+    if (!row || row.every((c) => c === '' || c === null || c === undefined)) continue;
+
+    const account = String(row[columnMap.account] ?? '').trim();
+    if (!account) continue;
+
+    const value = parseAmount(row[columnMap.value]);
+    if (value === null || Number.isNaN(value)) continue;
+
+    const name = columnMap.name !== undefined ? String(row[columnMap.name] ?? '').trim() : '';
+
+    entries.push({
+      account,
+      name,
+      value: Math.round(value * 100) / 100,
+    });
+  }
+
+  return entries;
+}
+
+const SUPPLIER_AMOUNT_TOLERANCE = 0.01;
+
+function round2(value) {
+  return Math.round(value * 100) / 100;
+}
+
+function aggregateByAccount(entries) {
+  const map = new Map();
+  for (const entry of entries) {
+    const key = normalizeAccountCode(entry.account);
+    if (!key) continue;
+    const existing = map.get(key);
+    if (existing) {
+      existing.value = round2(existing.value + entry.value);
+      if (!existing.name && entry.name) existing.name = entry.name;
+    } else {
+      map.set(key, { account: entry.account, name: entry.name, value: entry.value });
+    }
+  }
+  return map;
+}
+
+function reconcileSuppliers(balanceteEntries, supplierEntries) {
+  const balancete = aggregateByAccount(balanceteEntries);
+  const suppliers = aggregateByAccount(supplierEntries);
+
+  const matched = [];
+  const differences = [];
+
+  const allKeys = new Set([...balancete.keys(), ...suppliers.keys()]);
+
+  for (const key of allKeys) {
+    const b = balancete.get(key);
+    const s = suppliers.get(key);
+
+    if (b && s) {
+      const difference = round2(b.value - s.value);
+      const entry = {
+        supplier: s.name || b.name || s.account || b.account,
+        account: s.account || b.account,
+        balanceteValue: b.value,
+        supplierValue: s.value,
+        difference,
+      };
+      if (Math.abs(difference) <= SUPPLIER_AMOUNT_TOLERANCE) {
+        matched.push({ ...entry, status: 'Conciliado' });
+      } else {
+        differences.push({ ...entry, status: 'Diferença de valor' });
+      }
+    } else if (b && !s) {
+      differences.push({
+        supplier: b.name || b.account,
+        account: b.account,
+        balanceteValue: b.value,
+        supplierValue: 0,
+        difference: b.value,
+        status: 'Não localizado na planilha de fornecedores',
+      });
+    } else if (s && !b) {
+      differences.push({
+        supplier: s.name || s.account,
+        account: s.account,
+        balanceteValue: 0,
+        supplierValue: s.value,
+        difference: round2(-s.value),
+        status: 'Não localizado no balancete contábil',
+      });
+    }
+  }
+
+  differences.sort((a, b) => Math.abs(b.difference) - Math.abs(a.difference));
+
+  const sumValues = (map) => [...map.values()].reduce((acc, e) => acc + e.value, 0);
+
+  const summary = {
+    totalBalancete: balancete.size,
+    totalSuppliers: suppliers.size,
+    totalMatched: matched.length,
+    totalDifferences: differences.length,
+    sumBalancete: round2(sumValues(balancete)),
+    sumSuppliers: round2(sumValues(suppliers)),
+  };
+  summary.difference = round2(summary.sumBalancete - summary.sumSuppliers);
+
+  return { summary, matched, differences };
+}
+
+function buildSupplierReconciliationWorkbook(result) {
+  const { summary, differences, matched } = result;
+
+  const workbook = XLSX.utils.book_new();
+
+  const diffRows = differences.map((d) => ({
+    Fornecedor: d.supplier,
+    'Conta Contábil': d.account,
+    'Saldo Balancete': d.balanceteValue,
+    'Total Fornecedor': d.supplierValue,
+    Diferença: d.difference,
+    Status: d.status,
+  }));
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(diffRows), 'Diferenças');
+
+  const matchedRows = matched.map((m) => ({
+    Fornecedor: m.supplier,
+    'Conta Contábil': m.account,
+    'Saldo Balancete': m.balanceteValue,
+    'Total Fornecedor': m.supplierValue,
+    Diferença: m.difference,
+    Status: m.status,
+  }));
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(matchedRows), 'Conciliados');
+
+  const summaryRows = [
+    { Indicador: 'Contas no balancete contábil', Valor: summary.totalBalancete },
+    { Indicador: 'Fornecedores na planilha', Valor: summary.totalSuppliers },
+    { Indicador: 'Itens conciliados', Valor: summary.totalMatched },
+    { Indicador: 'Itens com diferença', Valor: summary.totalDifferences },
+    { Indicador: 'Soma balancete contábil (R$)', Valor: summary.sumBalancete },
+    { Indicador: 'Soma planilha de fornecedores (R$)', Valor: summary.sumSuppliers },
+    { Indicador: 'Diferença total (Balancete - Fornecedores) (R$)', Valor: summary.difference },
+  ];
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(summaryRows), 'Resumo');
+
+  return XLSX.write(workbook, { type: 'array', bookType: 'xlsx' });
+}
+
+/* ===================== Interface - Fornecedores ===================== */
+
+let balanceteFile = null;
+let suppliersFile = null;
+let supplierReconciliationResult = null;
+
+setupDropzone('file-balancete', 'dropzone-balancete', 'balancete-hint', 'balancete-subhint', 'Excel (.xlsx, .xls)', (file) => {
+  balanceteFile = file;
+  updateSupplierReconcileButton();
+});
+setupDropzone('file-suppliers', 'dropzone-suppliers', 'suppliers-hint', 'suppliers-subhint', 'Excel (.xlsx, .xls)', (file) => {
+  suppliersFile = file;
+  updateSupplierReconcileButton();
+});
+
+function updateSupplierReconcileButton() {
+  document.getElementById('btn-reconcile-suppliers').disabled = !(balanceteFile && suppliersFile);
+}
+
+function showSupplierError(message) {
+  const box = document.getElementById('error-box-suppliers');
+  if (!message) {
+    box.hidden = true;
+    box.textContent = '';
+  } else {
+    box.hidden = false;
+    box.textContent = message;
+  }
+}
+
+document.getElementById('btn-reconcile-suppliers').addEventListener('click', async () => {
+  const btn = document.getElementById('btn-reconcile-suppliers');
+  showSupplierError(null);
+  document.getElementById('results-suppliers').hidden = true;
+
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>Processando...';
+
+  try {
+    const balanceteEntries = parseAccountBalances(await readArrayBuffer(balanceteFile));
+    const supplierEntries = parseAccountBalances(await readArrayBuffer(suppliersFile));
+
+    if (balanceteEntries.length === 0) throw new Error('Nenhuma conta encontrada no balancete contábil.');
+    if (supplierEntries.length === 0) throw new Error('Nenhum fornecedor encontrado na planilha de fornecedores.');
+
+    supplierReconciliationResult = reconcileSuppliers(balanceteEntries, supplierEntries);
+    renderSupplierResult(supplierReconciliationResult);
+  } catch (err) {
+    showSupplierError(err.message || 'Erro ao processar os arquivos.');
+  } finally {
+    btn.disabled = !(balanceteFile && suppliersFile);
+    btn.textContent = 'Iniciar Conciliação';
+  }
+});
+
+function renderSupplierResult(result) {
+  const { summary, differences } = result;
+
+  document.getElementById('summary-supplier-matched').textContent = summary.totalMatched;
+  document.getElementById('summary-supplier-differences').textContent = summary.totalDifferences;
+  document.getElementById('summary-supplier-total').textContent = summary.totalSuppliers;
+  document.getElementById('summary-supplier-difference').textContent = currencyFmt.format(summary.difference);
+  document.getElementById('diff-title-suppliers').textContent = `Diferenças por Fornecedor (${differences.length})`;
+
+  const wrap = document.getElementById('diff-table-wrap-suppliers');
+  if (differences.length === 0) {
+    wrap.innerHTML = '<p class="empty-msg">Nenhuma diferença encontrada. Os registros estão totalmente conciliados.</p>';
+  } else {
+    const rows = differences
+      .map((item) => {
+        const badgeClass = item.status === 'Diferença de valor' ? 'cyan' : 'orange';
+        return `<tr>
+          <td class="title-cell" title="${escapeHtml(item.supplier)}">${escapeHtml(item.supplier)}</td>
+          <td>${escapeHtml(item.account)}</td>
+          <td class="right">${currencyFmt.format(item.balanceteValue)}</td>
+          <td class="right">${currencyFmt.format(item.supplierValue)}</td>
+          <td class="right">${currencyFmt.format(item.difference)}</td>
+          <td><span class="badge ${badgeClass}">${escapeHtml(item.status)}</span></td>
+        </tr>`;
+      })
+      .join('');
+
+    wrap.innerHTML = `<table class="diff-table">
+      <thead><tr><th>Fornecedor</th><th>Conta Contábil</th><th class="right">Saldo Balancete</th><th class="right">Total Fornecedor</th><th class="right">Diferença</th><th>Status</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+  }
+
+  document.getElementById('results-suppliers').hidden = false;
+}
+
+document.getElementById('btn-export-suppliers').addEventListener('click', () => {
+  if (!supplierReconciliationResult) return;
+
+  const btn = document.getElementById('btn-export-suppliers');
+  btn.disabled = true;
+  btn.textContent = 'Gerando...';
+
+  try {
+    const buffer = buildSupplierReconciliationWorkbook(supplierReconciliationResult);
+    const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'conciliacao_fornecedores.xlsx';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  } catch (err) {
+    showSupplierError('Erro ao gerar o arquivo Excel.');
   } finally {
     btn.disabled = false;
     btn.textContent = '📥 Exportar para Excel';

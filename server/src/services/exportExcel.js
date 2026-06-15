@@ -48,3 +48,48 @@ export function buildBankReconciliationWorkbook(result) {
 
   return XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
 }
+
+/**
+ * Builds an .xlsx workbook (as a Buffer) from a supplier reconciliation result.
+ */
+export function buildSupplierReconciliationWorkbook(result) {
+  const { summary, differences, matched } = result;
+
+  const workbook = XLSX.utils.book_new();
+
+  const diffRows = differences.map((d) => ({
+    Fornecedor: d.supplier,
+    'Conta Contábil': d.account,
+    'Saldo Balancete': d.balanceteValue,
+    'Total Fornecedor': d.supplierValue,
+    Diferença: d.difference,
+    Status: d.status,
+  }));
+  const diffSheet = XLSX.utils.json_to_sheet(diffRows);
+  XLSX.utils.book_append_sheet(workbook, diffSheet, 'Diferenças');
+
+  const matchedRows = matched.map((m) => ({
+    Fornecedor: m.supplier,
+    'Conta Contábil': m.account,
+    'Saldo Balancete': m.balanceteValue,
+    'Total Fornecedor': m.supplierValue,
+    Diferença: m.difference,
+    Status: m.status,
+  }));
+  const matchedSheet = XLSX.utils.json_to_sheet(matchedRows);
+  XLSX.utils.book_append_sheet(workbook, matchedSheet, 'Conciliados');
+
+  const summaryRows = [
+    { Indicador: 'Contas no balancete contábil', Valor: summary.totalBalancete },
+    { Indicador: 'Fornecedores na planilha', Valor: summary.totalSuppliers },
+    { Indicador: 'Itens conciliados', Valor: summary.totalMatched },
+    { Indicador: 'Itens com diferença', Valor: summary.totalDifferences },
+    { Indicador: 'Soma balancete contábil (R$)', Valor: summary.sumBalancete },
+    { Indicador: 'Soma planilha de fornecedores (R$)', Valor: summary.sumSuppliers },
+    { Indicador: 'Diferença total (Balancete - Fornecedores) (R$)', Valor: summary.difference },
+  ];
+  const summarySheet = XLSX.utils.json_to_sheet(summaryRows);
+  XLSX.utils.book_append_sheet(workbook, summarySheet, 'Resumo');
+
+  return XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+}

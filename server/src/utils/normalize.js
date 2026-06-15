@@ -58,6 +58,15 @@ export function parseAmount(value) {
   return negative ? -num : num;
 }
 
+// Normalizes an account code for comparison, stripping separators and leading zeros
+// so codes like "1.01.02.0001" and "01010001" can be matched.
+export function normalizeAccountCode(code) {
+  const digits = stripAccents(String(code ?? ''))
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '');
+  return digits.replace(/^0+(?=.)/, '');
+}
+
 // Parses dates in dd/mm/yyyy, dd-mm-yyyy, yyyy-mm-dd or Excel serial number formats.
 export function parseDateValue(value) {
   if (value === null || value === undefined || value === '') return null;
