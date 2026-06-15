@@ -2,12 +2,14 @@ import * as XLSX from 'xlsx';
 import { normalizeKey, parseAmount, parseDateValue } from '../utils/normalize.js';
 
 const DATE_KEYS = ['data', 'data lancamento', 'data lanc', 'dt', 'data movimento', 'data do lancamento'];
-const TITLE_KEYS = ['titulo', 'titulo/documento', 'numero do titulo', 'numero titulo'];
+const TITLE_KEYS = ['titulo', 'titulo/documento', 'prefixo/titulo', 'numero do titulo', 'numero titulo'];
 const DOC_KEYS = ['documento', 'numero documento', 'num documento', 'nro documento', 'numero', 'cheque', 'doc'];
-const DESC_KEYS = ['historico', 'descricao', 'historico padrao', 'complemento', 'lancamento', 'descricao do lancamento', 'memo'];
+const DESC_KEYS = ['historico', 'descricao', 'historico padrao', 'complemento', 'lancamento', 'descricao do lancamento', 'memo', 'operacao'];
 const VALUE_KEYS = ['valor', 'valor (r$)', 'montante', 'valor r$', 'valor lancamento'];
-const DEBIT_KEYS = ['debito', 'valor debito', 'debito (r$)'];
-const CREDIT_KEYS = ['credito', 'valor credito', 'credito (r$)'];
+// Columns that increase the account balance (debit on an asset/bank ledger, bank statement deposits).
+const INCREASE_KEYS = ['debito', 'valor debito', 'debito (r$)', 'entradas', 'entrada'];
+// Columns that decrease the account balance (credit on an asset/bank ledger, bank statement withdrawals).
+const DECREASE_KEYS = ['credito', 'valor credito', 'credito (r$)', 'saidas', 'saida'];
 
 function findHeaderRow(rows) {
   for (let i = 0; i < Math.min(rows.length, 20); i++) {
@@ -15,7 +17,7 @@ function findHeaderRow(rows) {
     const normalized = row.map((c) => normalizeKey(c));
     const hasDate = normalized.some((c) => DATE_KEYS.includes(c));
     const hasValue = normalized.some(
-      (c) => VALUE_KEYS.includes(c) || DEBIT_KEYS.includes(c) || CREDIT_KEYS.includes(c)
+      (c) => VALUE_KEYS.includes(c) || INCREASE_KEYS.includes(c) || DECREASE_KEYS.includes(c)
     );
     if (hasDate && hasValue) {
       return i;
@@ -33,10 +35,22 @@ function buildColumnMap(headerRow) {
     else if (DOC_KEYS.includes(key) && map.document === undefined) map.document = idx;
     else if (DESC_KEYS.includes(key) && map.description === undefined) map.description = idx;
     else if (VALUE_KEYS.includes(key) && map.value === undefined) map.value = idx;
-    else if (DEBIT_KEYS.includes(key) && map.debit === undefined) map.debit = idx;
-    else if (CREDIT_KEYS.includes(key) && map.credit === undefined) map.credit = idx;
+    else if (INCREASE_KEYS.includes(key) && map.increase === undefined) map.increase = idx;
+    else if (DECREASE_KEYS.includes(key) && map.decrease === undefined) map.decrease = idx;
   });
   return map;
+}
+
+function findDataSheet(workbook) {
+  for (const sheetName of workbook.SheetNames) {
+    const sheet = workbook.Sheets[sheetName];
+    const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true, defval: '' });
+    const headerIdx = findHeaderRow(rows);
+    if (headerIdx !== -1) {
+      return { rows, headerIdx };
+    }
+  }
+  return null;
 }
 
 /**
@@ -45,13 +59,12 @@ function buildColumnMap(headerRow) {
  */
 export function parseExcel(buffer) {
   const workbook = XLSX.read(buffer, { type: 'buffer', cellDates: false });
-  const sheet = workbook.Sheets[workbook.SheetNames[0]];
-  const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true, defval: '' });
 
-  const headerIdx = findHeaderRow(rows);
-  if (headerIdx === -1) {
+  const dataSheet = findDataSheet(workbook);
+  if (!dataSheet) {
     throw new Error('Não foi possível identificar as colunas de Data e Valor na planilha.');
   }
+  const { rows, headerIdx } = dataSheet;
 
   const columnMap = buildColumnMap(rows[headerIdx]);
   const entries = [];
@@ -65,10 +78,10 @@ export function parseExcel(buffer) {
     let value = null;
     if (columnMap.value !== undefined) {
       value = parseAmount(row[columnMap.value]);
-    } else if (columnMap.debit !== undefined || columnMap.credit !== undefined) {
-      const debit = columnMap.debit !== undefined ? parseAmount(row[columnMap.debit]) || 0 : 0;
-      const credit = columnMap.credit !== undefined ? parseAmount(row[columnMap.credit]) || 0 : 0;
-      value = credit - debit;
+    } else if (columnMap.increase !== undefined || columnMap.decrease !== undefined) {
+      const increase = columnMap.increase !== undefined ? parseAmount(row[columnMap.increase]) || 0 : 0;
+      const decrease = columnMap.decrease !== undefined ? parseAmount(row[columnMap.decrease]) || 0 : 0;
+      value = increase - decrease;
     }
 
     if (value === null || value === 0 || Number.isNaN(value)) continue;
