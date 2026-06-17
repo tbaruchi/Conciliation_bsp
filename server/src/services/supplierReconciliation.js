@@ -20,6 +20,20 @@ function getAccountSegments(code) {
     .map((segment) => segment.replace(/^0+(?=.)/, '').toUpperCase());
 }
 
+// Same split as getAccountSegments but keeps each segment's original digits (no leading-zero
+// stripping), needed to detect parent/child accounts whose deepest segment isn't separated by
+// a further dot but instead extends the parent's zero-padded code directly — e.g. some TOTVS
+// Protheus exports use a "conta reduzida" scheme where the subtotal "0010" is itself the
+// leading digits of every individual supplier's full code "001000000801". That only lines up
+// when comparing the original, unstripped digits.
+function getRawAccountSegments(code) {
+  return String(code ?? '')
+    .trim()
+    .split(/[^a-zA-Z0-9]+/)
+    .filter(Boolean)
+    .map((segment) => segment.toUpperCase());
+}
+
 // Checks whether an account belongs to the supplier group (starts with 2.1.2),
 // respecting the hierarchical structure of the code (so 2.1.20.x does not match 2.1.2.x).
 function isInSupplierGroup(account) {
@@ -31,20 +45,33 @@ function isInSupplierGroup(account) {
   return segments.join('').startsWith(SUPPLIER_GROUP_PREFIX.join(''));
 }
 
-function isAncestorOf(aSegments, bSegments) {
-  if (bSegments.length <= aSegments.length) return false;
-  return aSegments.every((seg, i) => bSegments[i] === seg);
+function isAncestorOf(aSegments, bSegments, aRaw, bRaw) {
+  if (bSegments.length < aSegments.length) return false;
+  for (let i = 0; i < aSegments.length - 1; i++) {
+    if (aSegments[i] !== bSegments[i]) return false;
+  }
+  const lastIdx = aSegments.length - 1;
+  if (bSegments.length > aSegments.length) {
+    return aSegments[lastIdx] === bSegments[lastIdx];
+  }
+  // Same depth: the child's last segment may extend the parent's via zero-padding
+  // (e.g. parent "0010", child "001000000801") rather than via an extra dot level.
+  return aRaw[lastIdx] !== bRaw[lastIdx] && bRaw[lastIdx].startsWith(aRaw[lastIdx]);
 }
 
 // Balancetes list the supplier group as a hierarchy with subtotal rows at every level
 // (e.g. "2.1.2", "2.1.2.01", "2.1.2.01.01") followed by the individual supplier accounts
-// (e.g. "2.1.2.01.01.012"). Only the leaf accounts represent real suppliers and should be
-// matched; subtotal/title rows at any level are excluded to avoid counting balances multiple
-// times.
+// (e.g. "2.1.2.01.01.012", or "2.1.2.01.001000000801" in flat-suffix-extension schemes).
+// Only the leaf accounts represent real suppliers and should be matched; subtotal/title rows
+// at any level are excluded to avoid counting balances multiple times.
 function filterLeafAccounts(entries) {
   const segmentsList = entries.map((e) => getAccountSegments(e.account));
+  const rawList = entries.map((e) => getRawAccountSegments(e.account));
   return entries.filter(
-    (_, i) => !segmentsList.some((other, j) => j !== i && isAncestorOf(segmentsList[i], other))
+    (_, i) =>
+      !segmentsList.some(
+        (other, j) => j !== i && isAncestorOf(segmentsList[i], other, rawList[i], rawList[j])
+      )
   );
 }
 
@@ -65,15 +92,36 @@ function aggregateByKey(entries, getKey) {
   return map;
 }
 
-// Keeps the first entry seen for each key (used for lookup tables where duplicates shouldn't be summed).
-function firstByKey(entries, getKey) {
-  const map = new Map();
+// Groups registry entries by supplier código, tracking the account registered for each loja
+// (branch/store). Most ERPs register a single account per supplier regardless of loja, but
+// some (seen in real TOTVS Protheus exports) register one distinct conta contábil per loja of
+// the same código — in that case the loja must be used to pick the right account.
+function buildRegistryIndex(entries) {
+  const byCode = new Map();
   for (const entry of entries) {
-    const key = getKey(entry);
-    if (!key || map.has(key)) continue;
-    map.set(key, entry);
+    const code = normalizeAccountCode(entry.code);
+    if (!code || !entry.account) continue;
+    let group = byCode.get(code);
+    if (!group) {
+      group = { byLoja: new Map(), accounts: new Set(), name: '' };
+      byCode.set(code, group);
+    }
+    const loja = normalizeAccountCode(entry.loja || '');
+    if (loja && !group.byLoja.has(loja)) group.byLoja.set(loja, entry.account);
+    group.accounts.add(entry.account);
+    if (!group.name && entry.name) group.name = entry.name;
   }
-  return map;
+  return byCode;
+}
+
+// Resolves the conta contábil for a supplier total entry. When every loja of that código
+// shares the same account, the loja is irrelevant and that account is used directly. Otherwise
+// the loja is required to disambiguate between the supplier's per-loja accounts.
+function resolveSupplierAccount(group, loja) {
+  if (!group) return null;
+  if (group.accounts.size === 1) return [...group.accounts][0];
+  if (loja && group.byLoja.has(loja)) return group.byLoja.get(loja);
+  return null;
 }
 
 /**
@@ -90,17 +138,22 @@ export function reconcileSuppliers(balanceteEntries, supplierTotalEntries, suppl
     (e) => normalizeAccountCode(e.account)
   );
 
-  const registryByCode = firstByKey(supplierRegistryEntries, (e) => normalizeAccountCode(e.code));
+  const registryIndex = buildRegistryIndex(supplierRegistryEntries);
   const totalsByCode = aggregateByKey(supplierTotalEntries, (e) => normalizeAccountCode(e.code));
+  const totalsByCodeLoja = aggregateByKey(
+    supplierTotalEntries,
+    (e) => `${normalizeAccountCode(e.code)}|${normalizeAccountCode(e.loja || '')}`
+  );
 
   const resolved = [];
   const unresolved = [];
-  for (const entry of totalsByCode.values()) {
-    const registryEntry = registryByCode.get(normalizeAccountCode(entry.code));
-    if (!registryEntry || !registryEntry.account) {
+  for (const entry of totalsByCodeLoja.values()) {
+    const group = registryIndex.get(normalizeAccountCode(entry.code));
+    const account = resolveSupplierAccount(group, normalizeAccountCode(entry.loja || ''));
+    if (!account) {
       unresolved.push(entry);
     } else {
-      resolved.push({ account: registryEntry.account, name: entry.name || registryEntry.name, value: entry.value });
+      resolved.push({ account, name: entry.name || group.name, value: entry.value });
     }
   }
 
@@ -168,7 +221,7 @@ export function reconcileSuppliers(balanceteEntries, supplierTotalEntries, suppl
   const summary = {
     totalBalancete: balancete.size,
     totalSuppliers: totalsByCode.size,
-    totalRegistry: registryByCode.size,
+    totalRegistry: registryIndex.size,
     totalUnresolved: unresolved.length,
     totalMatched: matched.length,
     totalDifferences: differences.length,

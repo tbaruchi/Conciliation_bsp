@@ -14,6 +14,7 @@ const CODE_KEYS = [
   'cod cliente',
   'codigo cliente',
   'matricula',
+  'codigo-nome do fornecedor',
 ];
 const ACCOUNT_KEYS = [
   'conta',
@@ -40,18 +41,23 @@ const NAME_KEYS = [
   'fornecedor',
 ];
 const VALUE_KEYS = ['total', 'valor total', 'saldo', 'saldo atual', 'valor', 'montante'];
+const LOJA_KEYS = ['loja', 'cod loja', 'cod. loja', 'codigo loja', 'loja fornecedor'];
 
 function hasAnyKey(normalizedRow, keys) {
   return normalizedRow.some((c) => keys.includes(c));
 }
 
-// Some exports concatenate "código -loja" (or "código -loja-nome") into a single cell even
-// under a plain "Codigo" header (e.g. "92028 -01"). Keep only the leading code segment so it
-// matches the bare code used elsewhere (e.g. in the supplier registry).
-function extractLeadingCode(raw) {
+// Some exports concatenate "código -loja" or "código-loja-nome" into a single cell, sometimes
+// under a plain "Codigo" header (e.g. "92028 -01") and sometimes under a "Codigo-Nome do
+// Fornecedor" header with no space before the dash (e.g. "000744-01-AFR CANONTOUR"). Splits out
+// the leading code and, when present, the loja (branch/store) segment that follows it — some
+// ERPs register one conta contábil per loja of the same supplier code, so the loja can matter
+// for resolving the correct account (see resolveSupplierAccount in supplierReconciliation.js).
+function extractCodeAndLoja(raw) {
   const str = String(raw ?? '').trim();
-  const match = str.match(/^(.*?)\s+-/);
-  return (match ? match[1] : str).trim();
+  const match = str.match(/^(.*?)\s*-\s*(\d+)/);
+  if (!match) return { code: str, loja: '' };
+  return { code: match[1].trim(), loja: match[2].trim() };
 }
 
 function findHeaderRow(rows, requiredKeySets) {
@@ -73,6 +79,7 @@ function buildColumnMap(headerRow) {
     else if (ACCOUNT_KEYS.includes(key) && map.account === undefined) map.account = idx;
     else if (NAME_KEYS.includes(key) && map.name === undefined) map.name = idx;
     else if (VALUE_KEYS.includes(key) && map.value === undefined) map.value = idx;
+    else if (LOJA_KEYS.includes(key) && map.loja === undefined) map.loja = idx;
   });
   return map;
 }
@@ -91,7 +98,7 @@ function findDataSheet(workbook, requiredKeySets) {
 
 /**
  * Parses the "Cadastro de Fornecedores" spreadsheet into a code -> account lookup table.
- * Returns: [{ code, account, name }]
+ * Returns: [{ code, loja, account, name }]
  */
 export function parseSupplierRegistry(buffer) {
   const workbook = XLSX.read(buffer, { type: 'buffer', cellDates: false });
@@ -110,13 +117,14 @@ export function parseSupplierRegistry(buffer) {
     const row = rows[i];
     if (!row || row.every((c) => c === '' || c === null || c === undefined)) continue;
 
-    const code = extractLeadingCode(row[columnMap.code]);
+    const { code: extractedCode, loja: extractedLoja } = extractCodeAndLoja(row[columnMap.code]);
     const account = columnMap.account !== undefined ? String(row[columnMap.account] ?? '').trim() : '';
-    if (!code || !account) continue;
+    if (!extractedCode || !account) continue;
 
+    const loja = columnMap.loja !== undefined ? String(row[columnMap.loja] ?? '').trim() : extractedLoja;
     const name = columnMap.name !== undefined ? String(row[columnMap.name] ?? '').trim() : '';
 
-    entries.push({ code, account, name });
+    entries.push({ code: extractedCode, loja, account, name });
   }
 
   return entries;
@@ -124,7 +132,7 @@ export function parseSupplierRegistry(buffer) {
 
 /**
  * Parses the "Planilha de Fornecedores" (totals) spreadsheet, identified by supplier code, not name.
- * Returns: [{ code, name, value }]
+ * Returns: [{ code, loja, name, value }]
  */
 export function parseSupplierTotals(buffer) {
   const workbook = XLSX.read(buffer, { type: 'buffer', cellDates: false });
@@ -143,18 +151,19 @@ export function parseSupplierTotals(buffer) {
     const row = rows[i];
     if (!row || row.every((c) => c === '' || c === null || c === undefined)) continue;
 
-    const code = extractLeadingCode(row[columnMap.code]);
+    const { code, loja: extractedLoja } = extractCodeAndLoja(row[columnMap.code]);
     if (!code) continue;
 
     const value = parseAmount(row[columnMap.value]);
     if (value === null || Number.isNaN(value)) continue;
 
+    const loja = columnMap.loja !== undefined ? String(row[columnMap.loja] ?? '').trim() : extractedLoja;
     const name = columnMap.name !== undefined ? String(row[columnMap.name] ?? '').trim() : '';
 
     // Accounts-payable exports commonly list outstanding amounts as negative (cash-flow
     // convention), while the balancete shows the same liability as a positive balance. Only
     // the magnitude is meaningful for reconciliation, so it's normalized to a positive value.
-    entries.push({ code, name, value: Math.round(Math.abs(value) * 100) / 100 });
+    entries.push({ code, loja, name, value: Math.round(Math.abs(value) * 100) / 100 });
   }
 
   return entries;
