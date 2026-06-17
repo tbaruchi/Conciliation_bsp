@@ -9,6 +9,7 @@ const TABS = [
   { id: 'clientes', label: 'Clientes' },
   { id: 'fornecedores', label: 'Fornecedores' },
   { id: 'impostos', label: 'Impostos' },
+  { id: 'folha', label: 'Folha' },
 ];
 
 function App() {
@@ -57,6 +58,7 @@ function App() {
         {activeTab === 'clientes' && <ComingSoon title="Conciliação de Clientes" />}
         {activeTab === 'fornecedores' && <SupplierReconciliation />}
         {activeTab === 'impostos' && <ComingSoon title="Conciliação de Impostos" />}
+        {activeTab === 'folha' && <ComingSoon title="Conciliação de Folha de Pagamento" />}
       </main>
 
       <footer className="text-center text-xs text-gray-400 py-4">
