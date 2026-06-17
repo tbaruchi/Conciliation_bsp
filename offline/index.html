@@ -1483,8 +1483,11 @@ function firstByKey(entries, getKey) {
 // VLOOKUP-style lookup against the supplier registry, and only then matched against the balancete
 // by account.
 function reconcileSuppliers(balanceteEntries, supplierTotalEntries, supplierRegistryEntries) {
+  const supplierGroupEntries = balanceteEntries.filter((e) => isInSupplierGroup(e.account));
+  // The first line of the 2.1.2 group is always the group's title (e.g. "Fornecedores a Pagar"),
+  // never a real supplier account, so it never appears in the suppliers spreadsheet and is excluded.
   const balancete = aggregateByKey(
-    balanceteEntries.filter((e) => isInSupplierGroup(e.account)),
+    supplierGroupEntries.slice(1),
     (e) => normalizeAccountCode(e.account)
   );
 
