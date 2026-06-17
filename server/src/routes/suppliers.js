@@ -2,18 +2,18 @@ import express from 'express';
 import multer from 'multer';
 import path from 'path';
 import { parseAccountBalances } from '../services/accountParser.js';
+import { parseSupplierRegistry, parseSupplierTotals } from '../services/supplierParser.js';
 import { reconcileSuppliers } from '../services/supplierReconciliation.js';
 import { buildSupplierReconciliationWorkbook } from '../services/exportExcel.js';
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
 
-function parseSpreadsheet(file, label) {
+function checkExcel(file, label) {
   const ext = path.extname(file.originalname).toLowerCase();
-  if (ext === '.xlsx' || ext === '.xls') {
-    return parseAccountBalances(file.buffer);
+  if (ext !== '.xlsx' && ext !== '.xls') {
+    throw new Error(`${label} deve estar em formato Excel (.xlsx ou .xls).`);
   }
-  throw new Error(`${label} deve estar em formato Excel (.xlsx ou .xls).`);
 }
 
 router.post(
@@ -21,18 +21,27 @@ router.post(
   upload.fields([
     { name: 'balancete', maxCount: 1 },
     { name: 'suppliers', maxCount: 1 },
+    { name: 'registry', maxCount: 1 },
   ]),
   async (req, res) => {
     try {
       const balanceteFile = req.files?.balancete?.[0];
       const suppliersFile = req.files?.suppliers?.[0];
+      const registryFile = req.files?.registry?.[0];
 
-      if (!balanceteFile || !suppliersFile) {
-        return res.status(400).json({ error: 'Envie o balancete contábil e a planilha de fornecedores.' });
+      if (!balanceteFile || !suppliersFile || !registryFile) {
+        return res.status(400).json({
+          error: 'Envie o balancete contábil, a planilha de fornecedores e o cadastro de fornecedores.',
+        });
       }
 
-      const balanceteEntries = parseSpreadsheet(balanceteFile, 'O balancete contábil');
-      const supplierEntries = parseSpreadsheet(suppliersFile, 'A planilha de fornecedores');
+      checkExcel(balanceteFile, 'O balancete contábil');
+      checkExcel(suppliersFile, 'A planilha de fornecedores');
+      checkExcel(registryFile, 'O cadastro de fornecedores');
+
+      const balanceteEntries = parseAccountBalances(balanceteFile.buffer);
+      const supplierEntries = parseSupplierTotals(suppliersFile.buffer);
+      const registryEntries = parseSupplierRegistry(registryFile.buffer);
 
       if (balanceteEntries.length === 0) {
         return res.status(400).json({ error: 'Nenhuma conta encontrada no balancete contábil.' });
@@ -40,8 +49,11 @@ router.post(
       if (supplierEntries.length === 0) {
         return res.status(400).json({ error: 'Nenhum fornecedor encontrado na planilha de fornecedores.' });
       }
+      if (registryEntries.length === 0) {
+        return res.status(400).json({ error: 'Nenhum fornecedor encontrado no cadastro de fornecedores.' });
+      }
 
-      const result = reconcileSuppliers(balanceteEntries, supplierEntries);
+      const result = reconcileSuppliers(balanceteEntries, supplierEntries, registryEntries);
       res.json(result);
     } catch (err) {
       console.error(err);

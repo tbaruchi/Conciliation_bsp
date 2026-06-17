@@ -427,7 +427,7 @@
     <section id="tab-fornecedores" hidden>
       <div class="card">
         <h2>Conciliação de Fornecedores</h2>
-        <p class="subtitle">Envie o balancete contábil e a planilha de fornecedores para identificar as diferenças por fornecedor, comparando a coluna Total da planilha de fornecedores com o saldo da respectiva conta contábil.</p>
+        <p class="subtitle">Envie o balancete contábil, a planilha de fornecedores e o cadastro de fornecedores. O código do fornecedor é localizado no cadastro (PROCV) para obter a conta contábil correspondente, e a conciliação é feita por conta contábil — os nomes não são usados na comparação, pois podem divergir entre as planilhas.</p>
 
         <div class="upload-row">
           <div class="upload-field">
@@ -444,8 +444,17 @@
             <label class="dropzone" for="file-suppliers" id="dropzone-suppliers">
               <span class="icon">📄</span>
               <span class="hint-main" id="suppliers-hint">Clique para selecionar o arquivo</span>
-              <span class="hint-sub" id="suppliers-subhint">Excel (.xlsx, .xls)</span>
+              <span class="hint-sub" id="suppliers-subhint">Excel (.xlsx, .xls) — código e total</span>
               <input type="file" id="file-suppliers" accept=".xlsx,.xls" />
+            </label>
+          </div>
+          <div class="upload-field">
+            <label class="field-label" for="file-registry">Cadastro de Fornecedores</label>
+            <label class="dropzone" for="file-registry" id="dropzone-registry">
+              <span class="icon">📄</span>
+              <span class="hint-main" id="registry-hint">Clique para selecionar o arquivo</span>
+              <span class="hint-sub" id="registry-subhint">Excel (.xlsx, .xls) — código e conta contábil</span>
+              <input type="file" id="file-registry" accept=".xlsx,.xls" />
             </label>
           </div>
         </div>
@@ -1315,25 +1324,185 @@ function isInSupplierGroup(account) {
   return segments.join('').startsWith(SUPPLIER_GROUP_PREFIX.join(''));
 }
 
-function aggregateByAccount(entries) {
+/* ===================== Parser do Cadastro / Totais de Fornecedores ===================== */
+
+const SUP_CODE_KEYS = [
+  'codigo',
+  'cod',
+  'codigo fornecedor',
+  'cod fornecedor',
+  'codigo do fornecedor',
+  'cod. fornecedor',
+  'cod forn',
+  'fornecedor',
+  'cliente',
+  'cod cliente',
+  'codigo cliente',
+  'matricula',
+];
+const SUP_ACCOUNT_KEYS = [
+  'conta',
+  'conta contabil',
+  'cod conta',
+  'cod. conta',
+  'codigo conta',
+  'codigo da conta',
+  'conta reduzida',
+  'cta',
+  'classificacao',
+];
+const SUP_NAME_KEYS = ['nome fornecedor', 'nome do fornecedor', 'razao social', 'nome', 'nome abreviado', 'descricao'];
+const SUP_VALUE_KEYS = ['total', 'valor total', 'saldo', 'saldo atual', 'valor', 'montante'];
+
+function supHasAnyKey(normalizedRow, keys) {
+  return normalizedRow.some((c) => keys.includes(c));
+}
+
+function findSupplierHeaderRow(rows, requiredKeySets) {
+  for (let i = 0; i < Math.min(rows.length, 20); i++) {
+    const row = rows[i] || [];
+    const normalized = row.map((c) => normalizeKey(c));
+    if (requiredKeySets.every((keys) => supHasAnyKey(normalized, keys))) return i;
+  }
+  return -1;
+}
+
+function buildSupplierColumnMap(headerRow) {
+  const map = {};
+  headerRow.forEach((cell, idx) => {
+    const key = normalizeKey(cell);
+    if (SUP_CODE_KEYS.includes(key) && map.code === undefined) map.code = idx;
+    else if (SUP_ACCOUNT_KEYS.includes(key) && map.account === undefined) map.account = idx;
+    else if (SUP_NAME_KEYS.includes(key) && map.name === undefined) map.name = idx;
+    else if (SUP_VALUE_KEYS.includes(key) && map.value === undefined) map.value = idx;
+  });
+  return map;
+}
+
+function findSupplierDataSheet(workbook, requiredKeySets) {
+  for (const sheetName of workbook.SheetNames) {
+    const sheet = workbook.Sheets[sheetName];
+    const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true, defval: '' });
+    const headerIdx = findSupplierHeaderRow(rows, requiredKeySets);
+    if (headerIdx !== -1) return { rows, headerIdx };
+  }
+  return null;
+}
+
+// Parses the "Cadastro de Fornecedores" spreadsheet into a code -> account lookup table.
+function parseSupplierRegistry(arrayBuffer) {
+  const workbook = XLSX.read(arrayBuffer, { type: 'array', cellDates: false });
+
+  const dataSheet = findSupplierDataSheet(workbook, [SUP_CODE_KEYS, SUP_ACCOUNT_KEYS]);
+  if (!dataSheet) {
+    throw new Error('Não foi possível identificar as colunas de Código do Fornecedor e Conta Contábil na planilha de cadastro de fornecedores.');
+  }
+  const { rows, headerIdx } = dataSheet;
+  const columnMap = buildSupplierColumnMap(rows[headerIdx]);
+
+  const entries = [];
+  for (let i = headerIdx + 1; i < rows.length; i++) {
+    const row = rows[i];
+    if (!row || row.every((c) => c === '' || c === null || c === undefined)) continue;
+
+    const code = String(row[columnMap.code] ?? '').trim();
+    const account = columnMap.account !== undefined ? String(row[columnMap.account] ?? '').trim() : '';
+    if (!code || !account) continue;
+
+    const name = columnMap.name !== undefined ? String(row[columnMap.name] ?? '').trim() : '';
+
+    entries.push({ code, account, name });
+  }
+
+  return entries;
+}
+
+// Parses the "Planilha de Fornecedores" (totals) spreadsheet, identified by supplier code, not name.
+function parseSupplierTotals(arrayBuffer) {
+  const workbook = XLSX.read(arrayBuffer, { type: 'array', cellDates: false });
+
+  const dataSheet = findSupplierDataSheet(workbook, [SUP_CODE_KEYS, SUP_VALUE_KEYS]);
+  if (!dataSheet) {
+    throw new Error('Não foi possível identificar as colunas de Código do Fornecedor e Total na planilha de fornecedores.');
+  }
+  const { rows, headerIdx } = dataSheet;
+  const columnMap = buildSupplierColumnMap(rows[headerIdx]);
+
+  const entries = [];
+  for (let i = headerIdx + 1; i < rows.length; i++) {
+    const row = rows[i];
+    if (!row || row.every((c) => c === '' || c === null || c === undefined)) continue;
+
+    const code = String(row[columnMap.code] ?? '').trim();
+    if (!code) continue;
+
+    const value = parseAmount(row[columnMap.value]);
+    if (value === null || Number.isNaN(value)) continue;
+
+    const name = columnMap.name !== undefined ? String(row[columnMap.name] ?? '').trim() : '';
+
+    entries.push({ code, name, value: Math.round(value * 100) / 100 });
+  }
+
+  return entries;
+}
+
+/* ===================== Reconciliação de Fornecedores ===================== */
+
+// Aggregates entries by a derived key, summing values for entries that share the same key.
+function aggregateByKey(entries, getKey) {
   const map = new Map();
   for (const entry of entries) {
-    const key = normalizeAccountCode(entry.account);
+    const key = getKey(entry);
     if (!key) continue;
     const existing = map.get(key);
     if (existing) {
       existing.value = round2(existing.value + entry.value);
       if (!existing.name && entry.name) existing.name = entry.name;
     } else {
-      map.set(key, { account: entry.account, name: entry.name, value: entry.value });
+      map.set(key, { ...entry });
     }
   }
   return map;
 }
 
-function reconcileSuppliers(balanceteEntries, supplierEntries) {
-  const balancete = aggregateByAccount(balanceteEntries.filter((e) => isInSupplierGroup(e.account)));
-  const suppliers = aggregateByAccount(supplierEntries);
+// Keeps the first entry seen for each key (used for lookup tables where duplicates shouldn't be summed).
+function firstByKey(entries, getKey) {
+  const map = new Map();
+  for (const entry of entries) {
+    const key = getKey(entry);
+    if (!key || map.has(key)) continue;
+    map.set(key, entry);
+  }
+  return map;
+}
+
+// Reconciles balancete contábil balances against the suppliers totals spreadsheet. Since the
+// totals spreadsheet identifies suppliers by code (not by account or by name — names may diverge
+// between spreadsheets), each supplier code is first resolved to its conta contábil via a
+// VLOOKUP-style lookup against the supplier registry, and only then matched against the balancete
+// by account.
+function reconcileSuppliers(balanceteEntries, supplierTotalEntries, supplierRegistryEntries) {
+  const balancete = aggregateByKey(
+    balanceteEntries.filter((e) => isInSupplierGroup(e.account)),
+    (e) => normalizeAccountCode(e.account)
+  );
+
+  const registryByCode = firstByKey(supplierRegistryEntries, (e) => normalizeAccountCode(e.code));
+  const totalsByCode = aggregateByKey(supplierTotalEntries, (e) => normalizeAccountCode(e.code));
+
+  const resolved = [];
+  const unresolved = [];
+  for (const entry of totalsByCode.values()) {
+    const registryEntry = registryByCode.get(normalizeAccountCode(entry.code));
+    if (!registryEntry || !registryEntry.account) {
+      unresolved.push(entry);
+    } else {
+      resolved.push({ account: registryEntry.account, name: entry.name || registryEntry.name, value: entry.value });
+    }
+  }
+
+  const suppliers = aggregateByKey(resolved, (e) => normalizeAccountCode(e.account));
 
   const matched = [];
   const differences = [];
@@ -1379,17 +1548,30 @@ function reconcileSuppliers(balanceteEntries, supplierEntries) {
     }
   }
 
+  for (const entry of unresolved) {
+    differences.push({
+      supplier: entry.name || entry.code,
+      account: '',
+      balanceteValue: 0,
+      supplierValue: entry.value,
+      difference: round2(-entry.value),
+      status: 'Fornecedor não localizado no cadastro (sem conta contábil)',
+    });
+  }
+
   differences.sort((a, b) => Math.abs(b.difference) - Math.abs(a.difference));
 
   const sumValues = (map) => [...map.values()].reduce((acc, e) => acc + e.value, 0);
 
   const summary = {
     totalBalancete: balancete.size,
-    totalSuppliers: suppliers.size,
+    totalSuppliers: totalsByCode.size,
+    totalRegistry: registryByCode.size,
+    totalUnresolved: unresolved.length,
     totalMatched: matched.length,
     totalDifferences: differences.length,
     sumBalancete: round2(sumValues(balancete)),
-    sumSuppliers: round2(sumValues(suppliers)),
+    sumSuppliers: round2(sumValues(totalsByCode)),
   };
   summary.difference = round2(summary.sumBalancete - summary.sumSuppliers);
 
@@ -1439,6 +1621,7 @@ function buildSupplierReconciliationWorkbook(result) {
 
 let balanceteFile = null;
 let suppliersFile = null;
+let registryFile = null;
 let supplierReconciliationResult = null;
 
 setupDropzone('file-balancete', 'dropzone-balancete', 'balancete-hint', 'balancete-subhint', 'Excel (.xlsx, .xls)', (file) => {
@@ -1449,9 +1632,13 @@ setupDropzone('file-suppliers', 'dropzone-suppliers', 'suppliers-hint', 'supplie
   suppliersFile = file;
   updateSupplierReconcileButton();
 });
+setupDropzone('file-registry', 'dropzone-registry', 'registry-hint', 'registry-subhint', 'Excel (.xlsx, .xls)', (file) => {
+  registryFile = file;
+  updateSupplierReconcileButton();
+});
 
 function updateSupplierReconcileButton() {
-  document.getElementById('btn-reconcile-suppliers').disabled = !(balanceteFile && suppliersFile);
+  document.getElementById('btn-reconcile-suppliers').disabled = !(balanceteFile && suppliersFile && registryFile);
 }
 
 function showSupplierError(message) {
@@ -1475,17 +1662,19 @@ document.getElementById('btn-reconcile-suppliers').addEventListener('click', asy
 
   try {
     const balanceteEntries = parseAccountBalances(await readArrayBuffer(balanceteFile));
-    const supplierEntries = parseAccountBalances(await readArrayBuffer(suppliersFile));
+    const supplierEntries = parseSupplierTotals(await readArrayBuffer(suppliersFile));
+    const registryEntries = parseSupplierRegistry(await readArrayBuffer(registryFile));
 
     if (balanceteEntries.length === 0) throw new Error('Nenhuma conta encontrada no balancete contábil.');
     if (supplierEntries.length === 0) throw new Error('Nenhum fornecedor encontrado na planilha de fornecedores.');
+    if (registryEntries.length === 0) throw new Error('Nenhum fornecedor encontrado no cadastro de fornecedores.');
 
-    supplierReconciliationResult = reconcileSuppliers(balanceteEntries, supplierEntries);
+    supplierReconciliationResult = reconcileSuppliers(balanceteEntries, supplierEntries, registryEntries);
     renderSupplierResult(supplierReconciliationResult);
   } catch (err) {
     showSupplierError(err.message || 'Erro ao processar os arquivos.');
   } finally {
-    btn.disabled = !(balanceteFile && suppliersFile);
+    btn.disabled = !(balanceteFile && suppliersFile && registryFile);
     btn.textContent = 'Iniciar Conciliação';
   }
 });

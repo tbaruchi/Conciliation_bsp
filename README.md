@@ -54,13 +54,17 @@ O resultado pode ser exportado para Excel pelo botão **Exportar para Excel**.
 Na aba **Fornecedores**, envie:
 
 1. **Balancete Contábil** (Excel `.xlsx`/`.xls`) — deve conter colunas de Conta Contábil e Saldo/Total. Apenas as contas do grupo de Fornecedores (que iniciam em **2.1.2**) são consideradas; as demais contas são desconsideradas automaticamente.
-2. **Planilha de Fornecedores** (Excel `.xlsx`/`.xls`) — deve conter colunas de Fornecedor, Conta Contábil e Total.
+2. **Planilha de Fornecedores** (Excel `.xlsx`/`.xls`) — deve conter colunas de Código do Fornecedor e Total. Esta planilha não contém a conta contábil.
+3. **Cadastro de Fornecedores** (Excel `.xlsx`/`.xls`) — deve conter colunas de Código do Fornecedor e Conta Contábil, usado para localizar a conta correspondente a cada fornecedor (PROCV/VLOOKUP por código).
 
-Ao clicar em **Iniciar Conciliação**, o sistema compara, para cada conta contábil, o saldo do balancete com o total da planilha de fornecedores, apontando:
+Ao clicar em **Iniciar Conciliação**, o sistema primeiro localiza, para cada fornecedor da planilha de totais, a conta contábil correspondente no cadastro (por código). Em seguida, compara o saldo do balancete com o total do fornecedor por conta contábil, apontando:
 
 - Fornecedores conciliados (saldo do balancete igual ao total da planilha)
 - Fornecedores com diferença de valor entre o balancete e a planilha
 - Contas presentes apenas no balancete ou apenas na planilha de fornecedores
+- Fornecedores cujo código não foi localizado no cadastro (sem conta contábil)
+
+A conciliação é feita exclusivamente por código/conta contábil — os nomes de fornecedor não são usados na comparação, pois podem divergir entre as planilhas.
 
 O resultado pode ser exportado para Excel pelo botão **Exportar para Excel**.
 

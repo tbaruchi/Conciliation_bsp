@@ -6,12 +6,13 @@ const currency = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: '
 export default function SupplierReconciliation() {
   const [balanceteFile, setBalanceteFile] = useState(null);
   const [suppliersFile, setSuppliersFile] = useState(null);
+  const [registryFile, setRegistryFile] = useState(null);
   const [loading, setLoading] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [error, setError] = useState(null);
   const [result, setResult] = useState(null);
 
-  const canSubmit = balanceteFile && suppliersFile && !loading;
+  const canSubmit = balanceteFile && suppliersFile && registryFile && !loading;
 
   async function handleReconcile() {
     setLoading(true);
@@ -21,6 +22,7 @@ export default function SupplierReconciliation() {
     const formData = new FormData();
     formData.append('balancete', balanceteFile);
     formData.append('suppliers', suppliersFile);
+    formData.append('registry', registryFile);
 
     try {
       const res = await fetch('/api/suppliers/reconcile', {
@@ -71,9 +73,10 @@ export default function SupplierReconciliation() {
       <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
         <h2 className="text-xl font-semibold text-pkf-navy mb-1">Conciliação de Fornecedores</h2>
         <p className="text-sm text-gray-500 mb-6">
-          Envie o balancete contábil e a planilha de fornecedores para identificar as diferenças por
-          fornecedor, comparando a coluna Total da planilha de fornecedores com o saldo da respectiva conta
-          contábil.
+          Envie o balancete contábil, a planilha de fornecedores e o cadastro de fornecedores. O código do
+          fornecedor é localizado no cadastro (PROCV) para obter a conta contábil correspondente, e a
+          conciliação é feita por conta contábil — os nomes não são usados na comparação, pois podem
+          divergir entre as planilhas.
         </p>
 
         <div className="flex flex-col sm:flex-row gap-4 mb-6">
@@ -86,10 +89,17 @@ export default function SupplierReconciliation() {
           />
           <FileUploadField
             label="Planilha de Fornecedores"
-            hint="Excel (.xlsx, .xls)"
+            hint="Excel (.xlsx, .xls) — código e total"
             accept=".xlsx,.xls"
             file={suppliersFile}
             onChange={setSuppliersFile}
+          />
+          <FileUploadField
+            label="Cadastro de Fornecedores"
+            hint="Excel (.xlsx, .xls) — código e conta contábil"
+            accept=".xlsx,.xls"
+            file={registryFile}
+            onChange={setRegistryFile}
           />
         </div>
 

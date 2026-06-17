@@ -31,31 +31,62 @@ function isInSupplierGroup(account) {
   return segments.join('').startsWith(SUPPLIER_GROUP_PREFIX.join(''));
 }
 
-// Aggregates entries by normalized account code, summing values for accounts
-// that appear more than once in the same spreadsheet.
-function aggregateByAccount(entries) {
+// Aggregates entries by a derived key, summing values for entries that share the same key.
+function aggregateByKey(entries, getKey) {
   const map = new Map();
   for (const entry of entries) {
-    const key = normalizeAccountCode(entry.account);
+    const key = getKey(entry);
     if (!key) continue;
     const existing = map.get(key);
     if (existing) {
       existing.value = round(existing.value + entry.value);
       if (!existing.name && entry.name) existing.name = entry.name;
     } else {
-      map.set(key, { account: entry.account, name: entry.name, value: entry.value });
+      map.set(key, { ...entry });
     }
+  }
+  return map;
+}
+
+// Keeps the first entry seen for each key (used for lookup tables where duplicates shouldn't be summed).
+function firstByKey(entries, getKey) {
+  const map = new Map();
+  for (const entry of entries) {
+    const key = getKey(entry);
+    if (!key || map.has(key)) continue;
+    map.set(key, entry);
   }
   return map;
 }
 
 /**
  * Reconciles "balancete contábil" account balances against the suppliers ("fornecedores")
- * spreadsheet totals, matching by conta contábil.
+ * spreadsheet totals. Since the totals spreadsheet identifies suppliers by code (not by
+ * account or by name — names may diverge between spreadsheets), each supplier code is first
+ * resolved to its conta contábil via a VLOOKUP-style lookup against the supplier registry
+ * ("Cadastro de Fornecedores"), and only then matched against the balancete by account.
  */
-export function reconcileSuppliers(balanceteEntries, supplierEntries) {
-  const balancete = aggregateByAccount(balanceteEntries.filter((e) => isInSupplierGroup(e.account)));
-  const suppliers = aggregateByAccount(supplierEntries);
+export function reconcileSuppliers(balanceteEntries, supplierTotalEntries, supplierRegistryEntries) {
+  const balancete = aggregateByKey(
+    balanceteEntries.filter((e) => isInSupplierGroup(e.account)),
+    (e) => normalizeAccountCode(e.account)
+  );
+
+  const registryByCode = firstByKey(supplierRegistryEntries, (e) => normalizeAccountCode(e.code));
+  const totalsByCode = aggregateByKey(supplierTotalEntries, (e) => normalizeAccountCode(e.code));
+
+  const resolved = [];
+  const unresolved = [];
+  for (const entry of totalsByCode.values()) {
+    const registryEntry = registryByCode.get(normalizeAccountCode(entry.code));
+    if (!registryEntry || !registryEntry.account) {
+      unresolved.push(entry);
+    } else {
+      resolved.push({ account: registryEntry.account, name: entry.name || registryEntry.name, value: entry.value });
+    }
+  }
+
+  const suppliers = aggregateByKey(resolved, (e) => normalizeAccountCode(e.account));
 
   const matched = [];
   const differences = [];
@@ -101,17 +132,30 @@ export function reconcileSuppliers(balanceteEntries, supplierEntries) {
     }
   }
 
+  for (const entry of unresolved) {
+    differences.push({
+      supplier: entry.name || entry.code,
+      account: '',
+      balanceteValue: 0,
+      supplierValue: entry.value,
+      difference: round(-entry.value),
+      status: 'Fornecedor não localizado no cadastro (sem conta contábil)',
+    });
+  }
+
   differences.sort((a, b) => Math.abs(b.difference) - Math.abs(a.difference));
 
   const sumValues = (map) => [...map.values()].reduce((acc, e) => acc + e.value, 0);
 
   const summary = {
     totalBalancete: balancete.size,
-    totalSuppliers: suppliers.size,
+    totalSuppliers: totalsByCode.size,
+    totalRegistry: registryByCode.size,
+    totalUnresolved: unresolved.length,
     totalMatched: matched.length,
     totalDifferences: differences.length,
     sumBalancete: round(sumValues(balancete)),
-    sumSuppliers: round(sumValues(suppliers)),
+    sumSuppliers: round(sumValues(totalsByCode)),
   };
   summary.difference = round(summary.sumBalancete - summary.sumSuppliers);
 
