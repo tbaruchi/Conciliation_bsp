@@ -25,6 +25,10 @@ const ACCOUNT_KEYS = [
   'conta reduzida',
   'cta',
   'classificacao',
+  'c contabil',
+  'c. contabil',
+  'c cta',
+  'cta contabil',
 ];
 const NAME_KEYS = [
   'nome fornecedor',
