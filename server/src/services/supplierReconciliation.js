@@ -31,6 +31,23 @@ function isInSupplierGroup(account) {
   return segments.join('').startsWith(SUPPLIER_GROUP_PREFIX.join(''));
 }
 
+function isAncestorOf(aSegments, bSegments) {
+  if (bSegments.length <= aSegments.length) return false;
+  return aSegments.every((seg, i) => bSegments[i] === seg);
+}
+
+// Balancetes list the supplier group as a hierarchy with subtotal rows at every level
+// (e.g. "2.1.2", "2.1.2.01", "2.1.2.01.01") followed by the individual supplier accounts
+// (e.g. "2.1.2.01.01.012"). Only the leaf accounts represent real suppliers and should be
+// matched; subtotal/title rows at any level are excluded to avoid counting balances multiple
+// times.
+function filterLeafAccounts(entries) {
+  const segmentsList = entries.map((e) => getAccountSegments(e.account));
+  return entries.filter(
+    (_, i) => !segmentsList.some((other, j) => j !== i && isAncestorOf(segmentsList[i], other))
+  );
+}
+
 // Aggregates entries by a derived key, summing values for entries that share the same key.
 function aggregateByKey(entries, getKey) {
   const map = new Map();
@@ -68,10 +85,8 @@ function firstByKey(entries, getKey) {
  */
 export function reconcileSuppliers(balanceteEntries, supplierTotalEntries, supplierRegistryEntries) {
   const supplierGroupEntries = balanceteEntries.filter((e) => isInSupplierGroup(e.account));
-  // The first line of the 2.1.2 group is always the group's title (e.g. "Fornecedores a Pagar"),
-  // never a real supplier account, so it never appears in the suppliers spreadsheet and is excluded.
   const balancete = aggregateByKey(
-    supplierGroupEntries.slice(1),
+    filterLeafAccounts(supplierGroupEntries),
     (e) => normalizeAccountCode(e.account)
   );
 

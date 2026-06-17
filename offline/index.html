@@ -1279,8 +1279,16 @@ function parseAccountBalances(arrayBuffer) {
     const account = String(row[columnMap.account] ?? '').trim();
     if (!account) continue;
 
-    const value = parseAmount(row[columnMap.value]);
+    let value = parseAmount(row[columnMap.value]);
     if (value === null || Number.isNaN(value)) continue;
+
+    // Many balancetes report "Saldo atual" as an unsigned magnitude, with the actual
+    // debit/credit sign carried in the very next column ("D"/"C"). When present, that
+    // marker is authoritative — a "D" balance on a credit-normal (liability) account
+    // offsets rather than adds to the group total, so it must be treated as negative.
+    const signMarker = String(row[columnMap.value + 1] ?? '').trim().toUpperCase();
+    if (signMarker === 'D') value = -Math.abs(value);
+    else if (signMarker === 'C') value = Math.abs(value);
 
     const name = columnMap.name !== undefined ? String(row[columnMap.name] ?? '').trim() : '';
 
@@ -1322,6 +1330,32 @@ function isInSupplierGroup(account) {
     return SUPPLIER_GROUP_PREFIX.every((seg, i) => segments[i] === seg);
   }
   return segments.join('').startsWith(SUPPLIER_GROUP_PREFIX.join(''));
+}
+
+function isAncestorOf(aSegments, bSegments) {
+  if (bSegments.length <= aSegments.length) return false;
+  return aSegments.every((seg, i) => bSegments[i] === seg);
+}
+
+// Balancetes list the supplier group as a hierarchy with subtotal rows at every level
+// (e.g. "2.1.2", "2.1.2.01", "2.1.2.01.01") followed by the individual supplier accounts
+// (e.g. "2.1.2.01.01.012"). Only the leaf accounts represent real suppliers and should be
+// matched; subtotal/title rows at any level are excluded to avoid counting balances multiple
+// times.
+function filterLeafAccounts(entries) {
+  const segmentsList = entries.map((e) => getAccountSegments(e.account));
+  return entries.filter(
+    (_, i) => !segmentsList.some((other, j) => j !== i && isAncestorOf(segmentsList[i], other))
+  );
+}
+
+// Some exports concatenate "código -loja" (or "código -loja-nome") into a single cell even
+// under a plain "Codigo" header (e.g. "92028 -01"). Keep only the leading code segment so it
+// matches the bare code used elsewhere (e.g. in the supplier registry).
+function extractLeadingCode(raw) {
+  const str = String(raw ?? '').trim();
+  const match = str.match(/^(.*?)\s+-/);
+  return (match ? match[1] : str).trim();
 }
 
 /* ===================== Parser do Cadastro / Totais de Fornecedores ===================== */
@@ -1409,7 +1443,7 @@ function parseSupplierRegistry(arrayBuffer) {
     const row = rows[i];
     if (!row || row.every((c) => c === '' || c === null || c === undefined)) continue;
 
-    const code = String(row[columnMap.code] ?? '').trim();
+    const code = extractLeadingCode(row[columnMap.code]);
     const account = columnMap.account !== undefined ? String(row[columnMap.account] ?? '').trim() : '';
     if (!code || !account) continue;
 
@@ -1437,7 +1471,7 @@ function parseSupplierTotals(arrayBuffer) {
     const row = rows[i];
     if (!row || row.every((c) => c === '' || c === null || c === undefined)) continue;
 
-    const code = String(row[columnMap.code] ?? '').trim();
+    const code = extractLeadingCode(row[columnMap.code]);
     if (!code) continue;
 
     const value = parseAmount(row[columnMap.value]);
@@ -1445,7 +1479,10 @@ function parseSupplierTotals(arrayBuffer) {
 
     const name = columnMap.name !== undefined ? String(row[columnMap.name] ?? '').trim() : '';
 
-    entries.push({ code, name, value: Math.round(value * 100) / 100 });
+    // Accounts-payable exports commonly list outstanding amounts as negative (cash-flow
+    // convention), while the balancete shows the same liability as a positive balance. Only
+    // the magnitude is meaningful for reconciliation, so it's normalized to a positive value.
+    entries.push({ code, name, value: Math.round(Math.abs(value) * 100) / 100 });
   }
 
   return entries;
@@ -1488,10 +1525,8 @@ function firstByKey(entries, getKey) {
 // by account.
 function reconcileSuppliers(balanceteEntries, supplierTotalEntries, supplierRegistryEntries) {
   const supplierGroupEntries = balanceteEntries.filter((e) => isInSupplierGroup(e.account));
-  // The first line of the 2.1.2 group is always the group's title (e.g. "Fornecedores a Pagar"),
-  // never a real supplier account, so it never appears in the suppliers spreadsheet and is excluded.
   const balancete = aggregateByKey(
-    supplierGroupEntries.slice(1),
+    filterLeafAccounts(supplierGroupEntries),
     (e) => normalizeAccountCode(e.account)
   );
 

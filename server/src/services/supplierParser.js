@@ -37,11 +37,21 @@ const NAME_KEYS = [
   'nome',
   'nome abreviado',
   'descricao',
+  'fornecedor',
 ];
 const VALUE_KEYS = ['total', 'valor total', 'saldo', 'saldo atual', 'valor', 'montante'];
 
 function hasAnyKey(normalizedRow, keys) {
   return normalizedRow.some((c) => keys.includes(c));
+}
+
+// Some exports concatenate "código -loja" (or "código -loja-nome") into a single cell even
+// under a plain "Codigo" header (e.g. "92028 -01"). Keep only the leading code segment so it
+// matches the bare code used elsewhere (e.g. in the supplier registry).
+function extractLeadingCode(raw) {
+  const str = String(raw ?? '').trim();
+  const match = str.match(/^(.*?)\s+-/);
+  return (match ? match[1] : str).trim();
 }
 
 function findHeaderRow(rows, requiredKeySets) {
@@ -100,7 +110,7 @@ export function parseSupplierRegistry(buffer) {
     const row = rows[i];
     if (!row || row.every((c) => c === '' || c === null || c === undefined)) continue;
 
-    const code = String(row[columnMap.code] ?? '').trim();
+    const code = extractLeadingCode(row[columnMap.code]);
     const account = columnMap.account !== undefined ? String(row[columnMap.account] ?? '').trim() : '';
     if (!code || !account) continue;
 
@@ -133,7 +143,7 @@ export function parseSupplierTotals(buffer) {
     const row = rows[i];
     if (!row || row.every((c) => c === '' || c === null || c === undefined)) continue;
 
-    const code = String(row[columnMap.code] ?? '').trim();
+    const code = extractLeadingCode(row[columnMap.code]);
     if (!code) continue;
 
     const value = parseAmount(row[columnMap.value]);
@@ -141,7 +151,10 @@ export function parseSupplierTotals(buffer) {
 
     const name = columnMap.name !== undefined ? String(row[columnMap.name] ?? '').trim() : '';
 
-    entries.push({ code, name, value: Math.round(value * 100) / 100 });
+    // Accounts-payable exports commonly list outstanding amounts as negative (cash-flow
+    // convention), while the balancete shows the same liability as a positive balance. Only
+    // the magnitude is meaningful for reconciliation, so it's normalized to a positive value.
+    entries.push({ code, name, value: Math.round(Math.abs(value) * 100) / 100 });
   }
 
   return entries;

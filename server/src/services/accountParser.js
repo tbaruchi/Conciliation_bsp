@@ -98,8 +98,16 @@ export function parseAccountBalances(buffer) {
     const account = String(row[columnMap.account] ?? '').trim();
     if (!account) continue;
 
-    const value = parseAmount(row[columnMap.value]);
+    let value = parseAmount(row[columnMap.value]);
     if (value === null || Number.isNaN(value)) continue;
+
+    // Many balancetes report "Saldo atual" as an unsigned magnitude, with the actual
+    // debit/credit sign carried in the very next column ("D"/"C"). When present, that
+    // marker is authoritative — a "D" balance on a credit-normal (liability) account
+    // offsets rather than adds to the group total, so it must be treated as negative.
+    const signMarker = String(row[columnMap.value + 1] ?? '').trim().toUpperCase();
+    if (signMarker === 'D') value = -Math.abs(value);
+    else if (signMarker === 'C') value = Math.abs(value);
 
     const name = columnMap.name !== undefined ? String(row[columnMap.name] ?? '').trim() : '';
 
