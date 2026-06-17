@@ -53,7 +53,7 @@ O resultado pode ser exportado para Excel pelo botão **Exportar para Excel**.
 
 Na aba **Fornecedores**, envie:
 
-1. **Balancete Contábil** (Excel `.xlsx`/`.xls`) — deve conter colunas de Conta Contábil e Saldo/Total.
+1. **Balancete Contábil** (Excel `.xlsx`/`.xls`) — deve conter colunas de Conta Contábil e Saldo/Total. Apenas as contas do grupo de Fornecedores (que iniciam em **2.1.2**) são consideradas; as demais contas são desconsideradas automaticamente.
 2. **Planilha de Fornecedores** (Excel `.xlsx`/`.xls`) — deve conter colunas de Fornecedor, Conta Contábil e Total.
 
 Ao clicar em **Iniciar Conciliação**, o sistema compara, para cada conta contábil, o saldo do balancete com o total da planilha de fornecedores, apontando:

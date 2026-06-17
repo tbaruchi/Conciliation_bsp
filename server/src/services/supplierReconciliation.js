@@ -2,8 +2,33 @@ import { normalizeAccountCode } from '../utils/normalize.js';
 
 const AMOUNT_TOLERANCE = 0.01;
 
+// Only accounts under this classification group (Fornecedores a Pagar) are considered
+// from the balancete contábil; every other account is ignored.
+const SUPPLIER_GROUP_PREFIX = ['2', '1', '2'];
+
 function round(value) {
   return Math.round(value * 100) / 100;
+}
+
+// Splits an account code into its hierarchical segments (e.g. "2.1.2.01.0001" -> ["2","1","2","01","0001"]),
+// normalizing each segment by stripping leading zeros so "02" and "2" are treated the same.
+function getAccountSegments(code) {
+  return String(code ?? '')
+    .trim()
+    .split(/[^a-zA-Z0-9]+/)
+    .filter(Boolean)
+    .map((segment) => segment.replace(/^0+(?=.)/, '').toUpperCase());
+}
+
+// Checks whether an account belongs to the supplier group (starts with 2.1.2),
+// respecting the hierarchical structure of the code (so 2.1.20.x does not match 2.1.2.x).
+function isInSupplierGroup(account) {
+  const segments = getAccountSegments(account);
+  if (segments.length >= SUPPLIER_GROUP_PREFIX.length) {
+    return SUPPLIER_GROUP_PREFIX.every((seg, i) => segments[i] === seg);
+  }
+  // Fallback for flat (non-hierarchical/non-separated) account codes.
+  return segments.join('').startsWith(SUPPLIER_GROUP_PREFIX.join(''));
 }
 
 // Aggregates entries by normalized account code, summing values for accounts
@@ -29,7 +54,7 @@ function aggregateByAccount(entries) {
  * spreadsheet totals, matching by conta contábil.
  */
 export function reconcileSuppliers(balanceteEntries, supplierEntries) {
-  const balancete = aggregateByAccount(balanceteEntries);
+  const balancete = aggregateByAccount(balanceteEntries.filter((e) => isInSupplierGroup(e.account)));
   const suppliers = aggregateByAccount(supplierEntries);
 
   const matched = [];
