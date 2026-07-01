@@ -93,3 +93,49 @@ export function buildSupplierReconciliationWorkbook(result) {
 
   return XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
 }
+
+/**
+ * Builds an .xlsx workbook (as a Buffer) from a client reconciliation result.
+ */
+export function buildClientReconciliationWorkbook(result) {
+  const { summary, differences, matched } = result;
+
+  const workbook = XLSX.utils.book_new();
+
+  const diffRows = differences.map((d) => ({
+    Cliente: d.client,
+    'Conta Contábil': d.account,
+    'Saldo Balancete': d.balanceteValue,
+    'Total Cliente': d.clientValue,
+    Diferença: d.difference,
+    Status: d.status,
+  }));
+  const diffSheet = XLSX.utils.json_to_sheet(diffRows);
+  XLSX.utils.book_append_sheet(workbook, diffSheet, 'Diferenças');
+
+  const matchedRows = matched.map((m) => ({
+    Cliente: m.client,
+    'Conta Contábil': m.account,
+    'Saldo Balancete': m.balanceteValue,
+    'Total Cliente': m.clientValue,
+    Diferença: m.difference,
+    Status: m.status,
+  }));
+  const matchedSheet = XLSX.utils.json_to_sheet(matchedRows);
+  XLSX.utils.book_append_sheet(workbook, matchedSheet, 'Conciliados');
+
+  const summaryRows = [
+    { Indicador: 'Contas no balancete contábil (nacionais)', Valor: summary.totalBalancete },
+    { Indicador: 'Clientes na planilha', Valor: summary.totalClients },
+    { Indicador: 'Clientes internacionais descartados', Valor: summary.totalDiscardedInternational },
+    { Indicador: 'Itens conciliados', Valor: summary.totalMatched },
+    { Indicador: 'Itens com diferença', Valor: summary.totalDifferences },
+    { Indicador: 'Soma balancete contábil (R$)', Valor: summary.sumBalancete },
+    { Indicador: 'Soma planilha de clientes (R$)', Valor: summary.sumClients },
+    { Indicador: 'Diferença total (Balancete - Clientes) (R$)', Valor: summary.difference },
+  ];
+  const summarySheet = XLSX.utils.json_to_sheet(summaryRows);
+  XLSX.utils.book_append_sheet(workbook, summarySheet, 'Resumo');
+
+  return XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+}

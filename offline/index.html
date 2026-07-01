@@ -280,25 +280,30 @@
     padding: 24px 0;
   }
 
-  .dev-card { text-align: center; padding: 48px 24px; }
-  .dev-card h2 { margin-bottom: 12px; }
-  .dev-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    background: rgba(245,130,31,0.1);
-    color: var(--pkf-orange);
-    border: 1px solid rgba(245,130,31,0.3);
-    border-radius: 9999px;
-    padding: 8px 16px;
+  .select-field { max-width: 320px; margin-bottom: 24px; }
+  .select-field label {
+    display: block;
     font-size: 0.875rem;
     font-weight: 500;
+    color: var(--pkf-navy);
+    margin-bottom: 4px;
   }
-  .dev-card p.desc {
-    color: #6b7280;
-    margin: 16px auto 0;
-    max-width: 28rem;
+  .select-field select {
+    width: 100%;
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: 0.875rem;
+    background: #fff;
+    cursor: pointer;
   }
+  .select-field select:focus { outline: none; border-color: var(--pkf-cyan); }
+  .select-field .hint-note {
+    font-size: 0.75rem;
+    color: #9ca3af;
+    margin-top: 4px;
+  }
+  .note-muted { font-size: 0.75rem; color: #9ca3af; margin: 0 0 16px; }
 
   footer.app-footer {
     text-align: center;
@@ -344,8 +349,6 @@
       <button class="tab-btn active" data-tab="banco">Banco</button>
       <button class="tab-btn" data-tab="clientes">Clientes</button>
       <button class="tab-btn" data-tab="fornecedores">Fornecedores</button>
-      <button class="tab-btn" data-tab="impostos">Impostos</button>
-      <button class="tab-btn" data-tab="folha">Folha</button>
     </div>
   </nav>
 
@@ -417,10 +420,84 @@
 
     <!-- Aba Clientes -->
     <section id="tab-clientes" hidden>
-      <div class="card dev-card">
+      <div class="card">
         <h2>Conciliação de Clientes</h2>
-        <div class="dev-badge">🚧 Em desenvolvimento</div>
-        <p class="desc">Esta conciliação ainda está sendo desenvolvida e estará disponível em breve.</p>
+        <p class="subtitle">Envie o balancete contábil, a planilha de clientes (contas a receber) e o cadastro de clientes. O código do cliente é localizado no cadastro (PROCV) para obter a conta contábil correspondente, e a conciliação é feita por conta contábil. Somente clientes nacionais são conciliados — clientes internacionais são descartados do resultado.</p>
+
+        <div class="select-field">
+          <label for="client-profile">Cliente</label>
+          <select id="client-profile">
+            <option value="iwaki">IWAKI do Brasil</option>
+          </select>
+          <p class="hint-note">Cada cliente Protheus tem uma estrutura de contas contábeis diferente — selecione o cliente para que o sistema saiba o que esperar dos arquivos.</p>
+        </div>
+
+        <div class="upload-row">
+          <div class="upload-field">
+            <label class="field-label" for="file-client-balancete">Balancete Contábil</label>
+            <label class="dropzone" for="file-client-balancete" id="dropzone-client-balancete">
+              <span class="icon">📄</span>
+              <span class="hint-main" id="client-balancete-hint">Clique para selecionar o arquivo</span>
+              <span class="hint-sub" id="client-balancete-subhint">Excel (.xlsx, .xls) — nacionais em amarelo</span>
+              <input type="file" id="file-client-balancete" accept=".xlsx,.xls" />
+            </label>
+          </div>
+          <div class="upload-field">
+            <label class="field-label" for="file-clients">Planilha de Clientes</label>
+            <label class="dropzone" for="file-clients" id="dropzone-clients">
+              <span class="icon">📄</span>
+              <span class="hint-main" id="clients-hint">Clique para selecionar o arquivo</span>
+              <span class="hint-sub" id="clients-subhint">Excel (.xlsx, .xls) — código e coluna TOTAL</span>
+              <input type="file" id="file-clients" accept=".xlsx,.xls" />
+            </label>
+          </div>
+          <div class="upload-field">
+            <label class="field-label" for="file-client-registry">Cadastro de Clientes</label>
+            <label class="dropzone" for="file-client-registry" id="dropzone-client-registry">
+              <span class="icon">📄</span>
+              <span class="hint-main" id="client-registry-hint">Clique para selecionar o arquivo</span>
+              <span class="hint-sub" id="client-registry-subhint">Excel (.xlsx, .xls) — código e conta contábil</span>
+              <input type="file" id="file-client-registry" accept=".xlsx,.xls" />
+            </label>
+          </div>
+        </div>
+
+        <button class="btn btn-primary" id="btn-reconcile-clients" disabled>Iniciar Conciliação</button>
+
+        <div class="alert-error" id="error-box-clients" hidden></div>
+      </div>
+
+      <div id="results-clients" hidden>
+        <div class="card" style="padding:0; background:transparent; border:none; box-shadow:none;">
+          <div class="summary-grid">
+            <div class="summary-card green">
+              <p class="label">Conciliados</p>
+              <p class="value" id="summary-client-matched">0</p>
+            </div>
+            <div class="summary-card orange">
+              <p class="label">Com Diferença</p>
+              <p class="value" id="summary-client-differences">0</p>
+            </div>
+            <div class="summary-card magenta">
+              <p class="label">Clientes</p>
+              <p class="value" id="summary-client-total">0</p>
+            </div>
+            <div class="summary-card cyan">
+              <p class="label">Diferença Total</p>
+              <p class="value" id="summary-client-difference">R$ 0,00</p>
+            </div>
+          </div>
+        </div>
+
+        <p class="note-muted" id="client-discarded-note" hidden></p>
+
+        <div class="card">
+          <div class="results-header">
+            <h3 id="diff-title-clients">Diferenças por Cliente (0)</h3>
+            <button class="btn btn-export" id="btn-export-clients">📥 Exportar para Excel</button>
+          </div>
+          <div id="diff-table-wrap-clients" class="overflow-x"></div>
+        </div>
       </div>
     </section>
 
@@ -494,24 +571,6 @@
           </div>
           <div id="diff-table-wrap-suppliers" class="overflow-x"></div>
         </div>
-      </div>
-    </section>
-
-    <!-- Aba Impostos -->
-    <section id="tab-impostos" hidden>
-      <div class="card dev-card">
-        <h2>Conciliação de Impostos</h2>
-        <div class="dev-badge">🚧 Em desenvolvimento</div>
-        <p class="desc">Esta conciliação ainda está sendo desenvolvida e estará disponível em breve.</p>
-      </div>
-    </section>
-
-    <!-- Aba Folha -->
-    <section id="tab-folha" hidden>
-      <div class="card dev-card">
-        <h2>Conciliação de Folha de Pagamento</h2>
-        <div class="dev-badge">🚧 Em desenvolvimento</div>
-        <p class="desc">Esta conciliação ainda está sendo desenvolvida e estará disponível em breve.</p>
       </div>
     </section>
 
@@ -1731,6 +1790,484 @@ function buildSupplierReconciliationWorkbook(result) {
   return XLSX.write(workbook, { type: 'array', bookType: 'xlsx' });
 }
 
+/* ===================== Parser do Cadastro / Totais de Clientes ===================== */
+
+const CLI_CODE_KEYS = [
+  'codigo',
+  'cod',
+  'codigo cliente',
+  'cod cliente',
+  'codigo do cliente',
+  'cod. cliente',
+  'cod cli',
+  'matricula',
+  'codigo-nome do cliente',
+  'codigo-lj-nome do cliente',
+];
+const CLI_ACCOUNT_KEYS = [
+  'conta',
+  'conta contabil',
+  'cod conta',
+  'cod. conta',
+  'codigo conta',
+  'codigo da conta',
+  'conta reduzida',
+  'cta',
+  'classificacao',
+  'c contabil',
+  'c. contabil',
+  'c cta',
+  'cta contabil',
+];
+const CLI_NAME_KEYS = ['nome cliente', 'nome do cliente', 'razao social', 'nome', 'nome abreviado', 'descricao', 'cliente'];
+const CLI_VALUE_KEYS = ['total', 'valor total', 'saldo', 'saldo atual', 'valor', 'montante'];
+const CLI_LOJA_KEYS = ['loja', 'cod loja', 'cod. loja', 'codigo loja', 'loja cliente'];
+
+function cliHasAnyKey(normalizedRow, keys) {
+  return normalizedRow.some((c) => keys.includes(c));
+}
+
+// Some exports concatenate "código-loja-nome" into a single cell (e.g. "000135-01-ACQUALUR
+// SERVICOS E"). Splits out the leading code and, when present, the loja (branch/store) segment
+// that follows it — some clients register one conta contábil per loja of the same código, so the
+// loja can matter for resolving the correct account (see resolveClientAccount below).
+function extractClientCodeAndLoja(raw) {
+  const str = String(raw ?? '').trim();
+  const match = str.match(/^(.*?)\s*-\s*(\d+)/);
+  if (!match) return { code: str, loja: '' };
+  return { code: match[1].trim(), loja: match[2].trim() };
+}
+
+function findClientHeaderRow(rows, requiredKeySets) {
+  for (let i = 0; i < Math.min(rows.length, 20); i++) {
+    const row = rows[i] || [];
+    const normalized = row.map((c) => normalizeKey(c));
+    if (requiredKeySets.every((keys) => cliHasAnyKey(normalized, keys))) return i;
+  }
+  return -1;
+}
+
+function buildClientColumnMap(headerRow) {
+  const map = {};
+  headerRow.forEach((cell, idx) => {
+    const key = normalizeKey(cell);
+    if (CLI_CODE_KEYS.includes(key) && map.code === undefined) map.code = idx;
+    else if (CLI_ACCOUNT_KEYS.includes(key) && map.account === undefined) map.account = idx;
+    else if (CLI_NAME_KEYS.includes(key) && map.name === undefined) map.name = idx;
+    else if (CLI_VALUE_KEYS.includes(key) && map.value === undefined) map.value = idx;
+    else if (CLI_LOJA_KEYS.includes(key) && map.loja === undefined) map.loja = idx;
+  });
+  return map;
+}
+
+function findClientDataSheet(workbook, requiredKeySets) {
+  for (const sheetName of workbook.SheetNames) {
+    const sheet = workbook.Sheets[sheetName];
+    const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true, defval: '' });
+    const headerIdx = findClientHeaderRow(rows, requiredKeySets);
+    if (headerIdx !== -1) return { rows, headerIdx };
+  }
+  return null;
+}
+
+// Parses the "Cadastro de Clientes" spreadsheet into a code -> account lookup table.
+function parseClientRegistry(arrayBuffer) {
+  const workbook = XLSX.read(arrayBuffer, { type: 'array', cellDates: false });
+
+  const dataSheet = findClientDataSheet(workbook, [CLI_CODE_KEYS, CLI_ACCOUNT_KEYS]);
+  if (!dataSheet) {
+    throw new Error('Não foi possível identificar as colunas de Código do Cliente e Conta Contábil na planilha de cadastro de clientes.');
+  }
+  const { rows, headerIdx } = dataSheet;
+  const columnMap = buildClientColumnMap(rows[headerIdx]);
+
+  const entries = [];
+  for (let i = headerIdx + 1; i < rows.length; i++) {
+    const row = rows[i];
+    if (!row || row.every((c) => c === '' || c === null || c === undefined)) continue;
+
+    const { code: extractedCode, loja: extractedLoja } = extractClientCodeAndLoja(row[columnMap.code]);
+    const account = columnMap.account !== undefined ? String(row[columnMap.account] ?? '').trim() : '';
+    if (!extractedCode || !account) continue;
+
+    const loja = columnMap.loja !== undefined ? String(row[columnMap.loja] ?? '').trim() : extractedLoja;
+    const name = columnMap.name !== undefined ? String(row[columnMap.name] ?? '').trim() : '';
+
+    entries.push({ code: extractedCode, loja, account, name });
+  }
+
+  return entries;
+}
+
+// Parses the "Clientes" (accounts-receivable totals) spreadsheet, identified by client code, not
+// name. Uses the "TOTAL" column, which already carries the correct sign (positive for open
+// invoices, negative for credit notes that reduce the client's balance) — unlike the accounts
+// payable totals used for suppliers, it must NOT be normalized to an absolute value.
+function parseClientTotals(arrayBuffer) {
+  const workbook = XLSX.read(arrayBuffer, { type: 'array', cellDates: false });
+
+  const dataSheet = findClientDataSheet(workbook, [CLI_CODE_KEYS, CLI_VALUE_KEYS]);
+  if (!dataSheet) {
+    throw new Error('Não foi possível identificar as colunas de Código do Cliente e Total na planilha de clientes.');
+  }
+  const { rows, headerIdx } = dataSheet;
+  const columnMap = buildClientColumnMap(rows[headerIdx]);
+
+  const entries = [];
+  for (let i = headerIdx + 1; i < rows.length; i++) {
+    const row = rows[i];
+    if (!row || row.every((c) => c === '' || c === null || c === undefined)) continue;
+
+    const { code, loja: extractedLoja } = extractClientCodeAndLoja(row[columnMap.code]);
+    if (!code) continue;
+
+    const value = parseAmount(row[columnMap.value]);
+    if (value === null || Number.isNaN(value)) continue;
+
+    const loja = columnMap.loja !== undefined ? String(row[columnMap.loja] ?? '').trim() : extractedLoja;
+    const name = columnMap.name !== undefined ? String(row[columnMap.name] ?? '').trim() : '';
+
+    entries.push({ code, loja, name, value: Math.round(value * 100) / 100 });
+  }
+
+  return entries;
+}
+
+const CLI_BAL_ACCOUNT_KEYS = [
+  'conta',
+  'conta contabil',
+  'cod conta',
+  'cod. conta',
+  'codigo',
+  'codigo conta',
+  'codigo da conta',
+  'conta reduzida',
+  'cta',
+  'classificacao',
+];
+const CLI_BAL_NAME_KEYS = ['cliente', 'nome cliente', 'nome do cliente', 'razao social', 'nome', 'descricao', 'nome da conta', 'titulo da conta', 'historico'];
+const CLI_BAL_VALUE_KEYS = [
+  'total', 'valor total', 'saldo', 'saldo atual', 'saldo final', 'saldo atual (r$)',
+  'saldo final (r$)', 'saldo (r$)', 'valor atual', 'valor', 'montante',
+];
+const CLI_DEFAULT_HIGHLIGHT_COLOR = 'FFFF00';
+
+function findClientBalanceteHeaderRow(rows) {
+  for (let i = 0; i < Math.min(rows.length, 20); i++) {
+    const row = rows[i] || [];
+    const normalized = row.map((c) => normalizeKey(c));
+    const hasAccount = normalized.some((c) => CLI_BAL_ACCOUNT_KEYS.includes(c));
+    const hasValue = normalized.some((c) => CLI_BAL_VALUE_KEYS.includes(c));
+    if (hasAccount && hasValue) return i;
+  }
+  return -1;
+}
+
+function buildClientBalanceteColumnMap(headerRow) {
+  const map = {};
+  headerRow.forEach((cell, idx) => {
+    const key = normalizeKey(cell);
+    if (CLI_BAL_ACCOUNT_KEYS.includes(key) && map.account === undefined) map.account = idx;
+    else if (CLI_BAL_NAME_KEYS.includes(key) && map.name === undefined) map.name = idx;
+    else if (CLI_BAL_VALUE_KEYS.includes(key) && map.value === undefined) map.value = idx;
+  });
+  return map;
+}
+
+function findClientBalanceteDataSheet(workbook) {
+  for (const sheetName of workbook.SheetNames) {
+    const sheet = workbook.Sheets[sheetName];
+    const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true, defval: '' });
+    const headerIdx = findClientBalanceteHeaderRow(rows);
+    if (headerIdx !== -1) return { sheet, rows, headerIdx };
+  }
+  return null;
+}
+
+// Parses a "Balancete de Verificação" restricted to Contas a Receber (clientes). Unlike accounts
+// payable (suppliers), accounts receivable is a debit-normal group: a "D" (débito) balance is the
+// normal, positive direction, while a "C" (crédito) balance — e.g. a client with a credit note or
+// overpayment — offsets the receivable and must be treated as negative. This is the opposite sign
+// convention from parseAccountBalances, which handles the credit-normal supplier group.
+//
+// Clients also differ from suppliers in that their chart-of-accounts hierarchy has no single
+// fixed group prefix across TOTVS Protheus clients. Instead, national clients are consistently
+// highlighted with a fill color in the balancete (yellow, by default) — that highlight is used
+// here to flag each leaf entry with `national: true/false`, so the reconciliation can restrict
+// itself to national clients and discard international ones.
+function parseClientAccountBalances(arrayBuffer, { highlightColor = CLI_DEFAULT_HIGHLIGHT_COLOR } = {}) {
+  const workbook = XLSX.read(arrayBuffer, { type: 'array', cellDates: false, cellStyles: true });
+
+  const dataSheet = findClientBalanceteDataSheet(workbook);
+  if (!dataSheet) {
+    throw new Error('Não foi possível identificar as colunas de Conta e Total/Saldo na planilha.');
+  }
+  const { sheet, rows, headerIdx } = dataSheet;
+  const columnMap = buildClientBalanceteColumnMap(rows[headerIdx]);
+  const targetColor = highlightColor.toUpperCase();
+
+  const entries = [];
+  for (let i = headerIdx + 1; i < rows.length; i++) {
+    const row = rows[i];
+    if (!row || row.every((c) => c === '' || c === null || c === undefined)) continue;
+
+    const account = String(row[columnMap.account] ?? '').trim();
+    if (!account) continue;
+
+    let value = parseAmount(row[columnMap.value]);
+    if (value === null || Number.isNaN(value)) continue;
+
+    const signMarker = String(row[columnMap.value + 1] ?? '').trim().toUpperCase();
+    if (signMarker === 'D') value = Math.abs(value);
+    else if (signMarker === 'C') value = -Math.abs(value);
+
+    const name = columnMap.name !== undefined ? String(row[columnMap.name] ?? '').trim() : '';
+
+    const cellAddr = XLSX.utils.encode_cell({ r: i, c: columnMap.account });
+    const cell = sheet[cellAddr];
+    const fgColor = cell?.s?.fgColor?.rgb;
+    const national = String(fgColor ?? '').toUpperCase() === targetColor;
+
+    entries.push({ account, name, value: Math.round(value * 100) / 100, national });
+  }
+
+  return entries;
+}
+
+/* ===================== Reconciliação de Clientes ===================== */
+
+// Same split as getAccountSegments (used for suppliers) but scoped separately so client
+// reconciliation logic stays self-contained.
+function getClientAccountSegments(code) {
+  return String(code ?? '')
+    .trim()
+    .split(/[^a-zA-Z0-9]+/)
+    .filter(Boolean)
+    .map((segment) => segment.replace(/^0+(?=.)/, '').toUpperCase());
+}
+
+function getRawClientAccountSegments(code) {
+  return String(code ?? '')
+    .trim()
+    .split(/[^a-zA-Z0-9]+/)
+    .filter(Boolean)
+    .map((segment) => segment.toUpperCase());
+}
+
+function isClientAncestorOf(aSegments, bSegments, aRaw, bRaw) {
+  if (bSegments.length < aSegments.length) return false;
+  for (let i = 0; i < aSegments.length - 1; i++) {
+    if (aSegments[i] !== bSegments[i]) return false;
+  }
+  const lastIdx = aSegments.length - 1;
+  if (bSegments.length > aSegments.length) {
+    return aSegments[lastIdx] === bSegments[lastIdx];
+  }
+  return aRaw[lastIdx] !== bRaw[lastIdx] && bRaw[lastIdx].startsWith(aRaw[lastIdx]);
+}
+
+// Balancetes list every group (clientes nacionais, internacionais, and unrelated GL groups like
+// ativo/passivo) as a hierarchy with subtotal rows at every level, followed by the individual
+// leaf accounts. Only leaf accounts represent real ledger balances and should be matched. This
+// runs across the whole balancete so a client leaf account is never mistaken for a subtotal of
+// some unrelated branch.
+function filterClientLeafAccounts(entries) {
+  const segmentsList = entries.map((e) => getClientAccountSegments(e.account));
+  const rawList = entries.map((e) => getRawClientAccountSegments(e.account));
+  return entries.filter(
+    (_, i) =>
+      !segmentsList.some(
+        (other, j) => j !== i && isClientAncestorOf(segmentsList[i], other, rawList[i], rawList[j])
+      )
+  );
+}
+
+// Groups registry entries by client código, tracking the account registered for each loja
+// (branch/store) — some clients register one distinct conta contábil per loja of the same
+// código, in which case the loja must be used to pick the right account.
+function buildClientRegistryIndex(entries) {
+  const byCode = new Map();
+  for (const entry of entries) {
+    const code = normalizeAccountCode(entry.code);
+    if (!code || !entry.account) continue;
+    let group = byCode.get(code);
+    if (!group) {
+      group = { byLoja: new Map(), accounts: new Set(), name: '' };
+      byCode.set(code, group);
+    }
+    const loja = normalizeAccountCode(entry.loja || '');
+    if (loja && !group.byLoja.has(loja)) group.byLoja.set(loja, entry.account);
+    group.accounts.add(entry.account);
+    if (!group.name && entry.name) group.name = entry.name;
+  }
+  return byCode;
+}
+
+// Resolves the conta contábil for a client total entry. When every loja of that código shares
+// the same account, the loja is irrelevant and that account is used directly. Otherwise the loja
+// is required to disambiguate between the client's per-loja accounts.
+function resolveClientAccount(group, loja) {
+  if (!group) return null;
+  if (group.accounts.size === 1) return [...group.accounts][0];
+  if (loja && group.byLoja.has(loja)) return group.byLoja.get(loja);
+  return null;
+}
+
+// Reconciles balancete contábil balances against the clients totals spreadsheet, restricted to
+// national clients — international clients are discarded from the result entirely. Since the
+// totals spreadsheet identifies clients by code (not by account or by name), each client code is
+// first resolved to its conta contábil via a VLOOKUP-style lookup against the client registry,
+// and only then matched against the balancete by account.
+function reconcileClients(balanceteEntries, clientTotalEntries, clientRegistryEntries) {
+  const leafEntries = filterClientLeafAccounts(balanceteEntries);
+  const nationalLeaf = leafEntries.filter((e) => e.national);
+  const otherLeafAccounts = new Set(
+    leafEntries.filter((e) => !e.national).map((e) => normalizeAccountCode(e.account))
+  );
+
+  const balancete = aggregateByKey(nationalLeaf, (e) => normalizeAccountCode(e.account));
+
+  const registryIndex = buildClientRegistryIndex(clientRegistryEntries);
+  const totalsByCode = aggregateByKey(clientTotalEntries, (e) => normalizeAccountCode(e.code));
+  const totalsByCodeLoja = aggregateByKey(
+    clientTotalEntries,
+    (e) => `${normalizeAccountCode(e.code)}|${normalizeAccountCode(e.loja || '')}`
+  );
+
+  const resolved = [];
+  const unresolved = [];
+  let discardedInternational = 0;
+  for (const entry of totalsByCodeLoja.values()) {
+    const group = registryIndex.get(normalizeAccountCode(entry.code));
+    const account = resolveClientAccount(group, normalizeAccountCode(entry.loja || ''));
+    if (!account) {
+      unresolved.push(entry);
+      continue;
+    }
+    if (otherLeafAccounts.has(normalizeAccountCode(account))) {
+      discardedInternational++;
+      continue;
+    }
+    resolved.push({ account, name: entry.name || group.name, value: entry.value });
+  }
+
+  const clients = aggregateByKey(resolved, (e) => normalizeAccountCode(e.account));
+
+  const matched = [];
+  const differences = [];
+
+  const allKeys = new Set([...balancete.keys(), ...clients.keys()]);
+
+  for (const key of allKeys) {
+    const b = balancete.get(key);
+    const c = clients.get(key);
+
+    if (b && c) {
+      const difference = round2(b.value - c.value);
+      const entry = {
+        client: c.name || b.name || c.account || b.account,
+        account: c.account || b.account,
+        balanceteValue: b.value,
+        clientValue: c.value,
+        difference,
+      };
+      if (Math.abs(difference) <= SUPPLIER_AMOUNT_TOLERANCE) {
+        matched.push({ ...entry, status: 'Conciliado' });
+      } else {
+        differences.push({ ...entry, status: 'Diferença de valor' });
+      }
+    } else if (b && !c) {
+      differences.push({
+        client: b.name || b.account,
+        account: b.account,
+        balanceteValue: b.value,
+        clientValue: 0,
+        difference: b.value,
+        status: 'Não localizado na planilha de clientes',
+      });
+    } else if (c && !b) {
+      differences.push({
+        client: c.name || c.account,
+        account: c.account,
+        balanceteValue: 0,
+        clientValue: c.value,
+        difference: round2(-c.value),
+        status: 'Não localizado no balancete contábil',
+      });
+    }
+  }
+
+  for (const entry of unresolved) {
+    differences.push({
+      client: entry.name || entry.code,
+      account: '',
+      balanceteValue: 0,
+      clientValue: entry.value,
+      difference: round2(-entry.value),
+      status: 'Cliente não localizado no cadastro (sem conta contábil)',
+    });
+  }
+
+  differences.sort((a, b) => Math.abs(b.difference) - Math.abs(a.difference));
+
+  const sumValues = (map) => [...map.values()].reduce((acc, e) => acc + e.value, 0);
+
+  const summary = {
+    totalBalancete: balancete.size,
+    totalClients: totalsByCode.size,
+    totalRegistry: registryIndex.size,
+    totalUnresolved: unresolved.length,
+    totalDiscardedInternational: discardedInternational,
+    totalMatched: matched.length,
+    totalDifferences: differences.length,
+    sumBalancete: round2(sumValues(balancete)),
+    sumClients: round2(sumValues(clients)),
+  };
+  summary.difference = round2(summary.sumBalancete - summary.sumClients);
+
+  return { summary, matched, differences };
+}
+
+function buildClientReconciliationWorkbook(result) {
+  const { summary, differences, matched } = result;
+
+  const workbook = XLSX.utils.book_new();
+
+  const diffRows = differences.map((d) => ({
+    Cliente: d.client,
+    'Conta Contábil': d.account,
+    'Saldo Balancete': d.balanceteValue,
+    'Total Cliente': d.clientValue,
+    Diferença: d.difference,
+    Status: d.status,
+  }));
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(diffRows), 'Diferenças');
+
+  const matchedRows = matched.map((m) => ({
+    Cliente: m.client,
+    'Conta Contábil': m.account,
+    'Saldo Balancete': m.balanceteValue,
+    'Total Cliente': m.clientValue,
+    Diferença: m.difference,
+    Status: m.status,
+  }));
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(matchedRows), 'Conciliados');
+
+  const summaryRows = [
+    { Indicador: 'Contas no balancete contábil (nacionais)', Valor: summary.totalBalancete },
+    { Indicador: 'Clientes na planilha', Valor: summary.totalClients },
+    { Indicador: 'Clientes internacionais descartados', Valor: summary.totalDiscardedInternational },
+    { Indicador: 'Itens conciliados', Valor: summary.totalMatched },
+    { Indicador: 'Itens com diferença', Valor: summary.totalDifferences },
+    { Indicador: 'Soma balancete contábil (R$)', Valor: summary.sumBalancete },
+    { Indicador: 'Soma planilha de clientes (R$)', Valor: summary.sumClients },
+    { Indicador: 'Diferença total (Balancete - Clientes) (R$)', Valor: summary.difference },
+  ];
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(summaryRows), 'Resumo');
+
+  return XLSX.write(workbook, { type: 'array', bookType: 'xlsx' });
+}
+
 /* ===================== Interface - Fornecedores ===================== */
 
 let balanceteFile = null;
@@ -1849,6 +2386,149 @@ document.getElementById('btn-export-suppliers').addEventListener('click', () => 
     URL.revokeObjectURL(url);
   } catch (err) {
     showSupplierError('Erro ao gerar o arquivo Excel.');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '📥 Exportar para Excel';
+  }
+});
+
+/* ===================== Interface - Clientes ===================== */
+
+// Each client's balancete highlights national accounts with its own convention, validated
+// against real files before being added here. Add new clients only after confirming the
+// reconciliation works correctly with their actual files.
+const CLIENT_PROFILES = {
+  iwaki: { label: 'IWAKI do Brasil', highlightColor: 'FFFF00' },
+};
+
+let clientBalanceteFile = null;
+let clientsFile = null;
+let clientRegistryFile = null;
+let clientReconciliationResult = null;
+
+setupDropzone('file-client-balancete', 'dropzone-client-balancete', 'client-balancete-hint', 'client-balancete-subhint', 'Excel (.xlsx, .xls) — nacionais em amarelo', (file) => {
+  clientBalanceteFile = file;
+  updateClientReconcileButton();
+});
+setupDropzone('file-clients', 'dropzone-clients', 'clients-hint', 'clients-subhint', 'Excel (.xlsx, .xls) — código e coluna TOTAL', (file) => {
+  clientsFile = file;
+  updateClientReconcileButton();
+});
+setupDropzone('file-client-registry', 'dropzone-client-registry', 'client-registry-hint', 'client-registry-subhint', 'Excel (.xlsx, .xls) — código e conta contábil', (file) => {
+  clientRegistryFile = file;
+  updateClientReconcileButton();
+});
+
+function updateClientReconcileButton() {
+  document.getElementById('btn-reconcile-clients').disabled = !(clientBalanceteFile && clientsFile && clientRegistryFile);
+}
+
+function showClientError(message) {
+  const box = document.getElementById('error-box-clients');
+  if (!message) {
+    box.hidden = true;
+    box.textContent = '';
+  } else {
+    box.hidden = false;
+    box.textContent = message;
+  }
+}
+
+document.getElementById('btn-reconcile-clients').addEventListener('click', async () => {
+  const btn = document.getElementById('btn-reconcile-clients');
+  showClientError(null);
+  document.getElementById('results-clients').hidden = true;
+
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>Processando...';
+
+  try {
+    const profileId = document.getElementById('client-profile').value;
+    const profile = CLIENT_PROFILES[profileId] || { highlightColor: 'FFFF00' };
+    const balanceteEntries = parseClientAccountBalances(await readArrayBuffer(clientBalanceteFile), {
+      highlightColor: profile.highlightColor,
+    });
+    const clientEntries = parseClientTotals(await readArrayBuffer(clientsFile));
+    const registryEntries = parseClientRegistry(await readArrayBuffer(clientRegistryFile));
+
+    if (balanceteEntries.length === 0) throw new Error('Nenhuma conta encontrada no balancete contábil.');
+    if (clientEntries.length === 0) throw new Error('Nenhum cliente encontrado na planilha de clientes.');
+    if (registryEntries.length === 0) throw new Error('Nenhum cliente encontrado no cadastro de clientes.');
+
+    clientReconciliationResult = reconcileClients(balanceteEntries, clientEntries, registryEntries);
+    renderClientResult(clientReconciliationResult);
+  } catch (err) {
+    showClientError(err.message || 'Erro ao processar os arquivos.');
+  } finally {
+    btn.disabled = !(clientBalanceteFile && clientsFile && clientRegistryFile);
+    btn.textContent = 'Iniciar Conciliação';
+  }
+});
+
+function renderClientResult(result) {
+  const { summary, differences } = result;
+
+  document.getElementById('summary-client-matched').textContent = summary.totalMatched;
+  document.getElementById('summary-client-differences').textContent = summary.totalDifferences;
+  document.getElementById('summary-client-total').textContent = summary.totalClients;
+  document.getElementById('summary-client-difference').textContent = currencyFmt.format(summary.difference);
+  document.getElementById('diff-title-clients').textContent = `Diferenças por Cliente (${differences.length})`;
+
+  const discardedNote = document.getElementById('client-discarded-note');
+  if (summary.totalDiscardedInternational > 0) {
+    discardedNote.hidden = false;
+    discardedNote.textContent = `${summary.totalDiscardedInternational} cliente(s) internacional(is) descartado(s) do resultado.`;
+  } else {
+    discardedNote.hidden = true;
+  }
+
+  const wrap = document.getElementById('diff-table-wrap-clients');
+  if (differences.length === 0) {
+    wrap.innerHTML = '<p class="empty-msg">Nenhuma diferença encontrada. Os registros estão totalmente conciliados.</p>';
+  } else {
+    const rows = differences
+      .map((item) => {
+        const badgeClass = item.status === 'Diferença de valor' ? 'cyan' : 'orange';
+        return `<tr>
+          <td class="title-cell" title="${escapeHtml(item.client)}">${escapeHtml(item.client)}</td>
+          <td>${escapeHtml(item.account)}</td>
+          <td class="right">${currencyFmt.format(item.balanceteValue)}</td>
+          <td class="right">${currencyFmt.format(item.clientValue)}</td>
+          <td class="right">${currencyFmt.format(item.difference)}</td>
+          <td><span class="badge ${badgeClass}">${escapeHtml(item.status)}</span></td>
+        </tr>`;
+      })
+      .join('');
+
+    wrap.innerHTML = `<table class="diff-table">
+      <thead><tr><th>Cliente</th><th>Conta Contábil</th><th class="right">Saldo Balancete</th><th class="right">Total Cliente</th><th class="right">Diferença</th><th>Status</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+  }
+
+  document.getElementById('results-clients').hidden = false;
+}
+
+document.getElementById('btn-export-clients').addEventListener('click', () => {
+  if (!clientReconciliationResult) return;
+
+  const btn = document.getElementById('btn-export-clients');
+  btn.disabled = true;
+  btn.textContent = 'Gerando...';
+
+  try {
+    const buffer = buildClientReconciliationWorkbook(clientReconciliationResult);
+    const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'conciliacao_clientes.xlsx';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  } catch (err) {
+    showClientError('Erro ao gerar o arquivo Excel.');
   } finally {
     btn.disabled = false;
     btn.textContent = '📥 Exportar para Excel';

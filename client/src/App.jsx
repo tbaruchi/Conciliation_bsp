@@ -2,14 +2,12 @@ import { useState } from 'react';
 import logo from './assets/pkf-logo.png';
 import BankReconciliation from './components/BankReconciliation';
 import SupplierReconciliation from './components/SupplierReconciliation';
-import ComingSoon from './components/ComingSoon';
+import ClientReconciliation from './components/ClientReconciliation';
 
 const TABS = [
   { id: 'banco', label: 'Banco' },
   { id: 'clientes', label: 'Clientes' },
   { id: 'fornecedores', label: 'Fornecedores' },
-  { id: 'impostos', label: 'Impostos' },
-  { id: 'folha', label: 'Folha' },
 ];
 
 function App() {
@@ -55,10 +53,8 @@ function App() {
 
       <main className="max-w-6xl mx-auto w-full px-6 py-8 flex-1">
         {activeTab === 'banco' && <BankReconciliation />}
-        {activeTab === 'clientes' && <ComingSoon title="Conciliação de Clientes" />}
+        {activeTab === 'clientes' && <ClientReconciliation />}
         {activeTab === 'fornecedores' && <SupplierReconciliation />}
-        {activeTab === 'impostos' && <ComingSoon title="Conciliação de Impostos" />}
-        {activeTab === 'folha' && <ComingSoon title="Conciliação de Folha de Pagamento" />}
       </main>
 
       <footer className="text-center text-xs text-gray-400 py-4">
