@@ -39,6 +39,7 @@ const NAME_KEYS = [
 ];
 const VALUE_KEYS = ['total', 'valor total', 'saldo', 'saldo atual', 'valor', 'montante'];
 const LOJA_KEYS = ['loja', 'cod loja', 'cod. loja', 'codigo loja', 'loja cliente'];
+const CNPJ_KEYS = ['cnpj/cpf', 'cnpj', 'cpf/cnpj', 'cnpj cpf', 'cpf cnpj'];
 
 function hasAnyKey(normalizedRow, keys) {
   return normalizedRow.some((c) => keys.includes(c));
@@ -54,6 +55,18 @@ function extractCodeAndLoja(raw) {
   const match = str.match(/^(.*?)\s*-\s*(\d+)/);
   if (!match) return { code: str, loja: '' };
   return { code: match[1].trim(), loja: match[2].trim() };
+}
+
+// Real-world client registries commonly register the same company multiple times under
+// different códigos — one per branch/CNPJ suffix, sometimes with an incomplete duplicate that
+// never got a conta contábil assigned. The first 8 digits of the CNPJ (the "raiz") identify the
+// actual company regardless of branch, and are used to merge those códigos back into a single
+// client for reconciliation (see clientReconciliation.js) — far more reliable than matching by
+// name, since unrelated companies can coincidentally share a first name word (e.g. "GENERAL").
+function cnpjRoot(raw) {
+  const digits = String(raw ?? '').replace(/\D/g, '');
+  if (!digits) return '';
+  return digits.length >= 8 ? digits.slice(0, 8) : digits;
 }
 
 function findHeaderRow(rows, requiredKeySets) {
@@ -76,6 +89,7 @@ function buildColumnMap(headerRow) {
     else if (NAME_KEYS.includes(key) && map.name === undefined) map.name = idx;
     else if (VALUE_KEYS.includes(key) && map.value === undefined) map.value = idx;
     else if (LOJA_KEYS.includes(key) && map.loja === undefined) map.loja = idx;
+    else if (CNPJ_KEYS.includes(key) && map.cnpj === undefined) map.cnpj = idx;
   });
   return map;
 }
@@ -113,8 +127,11 @@ function findDataSheet(workbook, requiredKeySets, preferredKeyword) {
 }
 
 /**
- * Parses the "Cadastro de Clientes" spreadsheet into a code -> account lookup table.
- * Returns: [{ code, loja, account, name }]
+ * Parses the "Cadastro de Clientes" spreadsheet into a code -> account lookup table. Entries
+ * without a conta contábil (a common registry gap for duplicate códigos of the same company) are
+ * still kept, as long as a código is present — their CNPJ is what lets clientReconciliation.js
+ * merge them back into the company that does have an account.
+ * Returns: [{ code, loja, account, name, cnpjRoot }]
  */
 export function parseClientRegistry(buffer) {
   const workbook = XLSX.read(buffer, { type: 'buffer', cellDates: false });
@@ -134,13 +151,14 @@ export function parseClientRegistry(buffer) {
     if (!row || row.every((c) => c === '' || c === null || c === undefined)) continue;
 
     const { code: extractedCode, loja: extractedLoja } = extractCodeAndLoja(row[columnMap.code]);
-    const account = columnMap.account !== undefined ? String(row[columnMap.account] ?? '').trim() : '';
-    if (!extractedCode || !account) continue;
+    if (!extractedCode) continue;
 
+    const account = columnMap.account !== undefined ? String(row[columnMap.account] ?? '').trim() : '';
     const loja = columnMap.loja !== undefined ? String(row[columnMap.loja] ?? '').trim() : extractedLoja;
     const name = columnMap.name !== undefined ? String(row[columnMap.name] ?? '').trim() : '';
+    const cnpj = columnMap.cnpj !== undefined ? cnpjRoot(row[columnMap.cnpj]) : '';
 
-    entries.push({ code: extractedCode, loja, account, name });
+    entries.push({ code: extractedCode, loja, account, name, cnpjRoot: cnpj });
   }
 
   return entries;

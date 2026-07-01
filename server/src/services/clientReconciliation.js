@@ -133,25 +133,67 @@ function aggregateByKey(entries, getKey) {
   return map;
 }
 
+// Same idea, but also collects every distinct conta contábil folded into that key — used once
+// entries are grouped by CNPJ root, since a company merged from several códigos (or a balancete
+// with more than one leaf account for the same CNPJ) can span more than one account. `account`
+// is the joined, sorted list for display; `accounts` is the underlying set.
+function aggregateWithAccounts(entries, getKey, getAccount) {
+  const map = new Map();
+  for (const entry of entries) {
+    const key = getKey(entry);
+    if (!key) continue;
+    const account = getAccount(entry);
+    const existing = map.get(key);
+    if (existing) {
+      existing.value = round(existing.value + entry.value);
+      if (!existing.name && entry.name) existing.name = entry.name;
+      if (account) existing.accounts.add(account);
+    } else {
+      map.set(key, { name: entry.name, value: entry.value, accounts: new Set(account ? [account] : []) });
+    }
+  }
+  for (const group of map.values()) {
+    group.account = [...group.accounts].sort().join(', ');
+  }
+  return map;
+}
+
 // Groups registry entries by client código, tracking the account registered for each loja
 // (branch/store) — some clients register one distinct conta contábil per loja of the same
-// código, in which case the loja must be used to pick the right account.
+// código, in which case the loja must be used to pick the right account. Entries without an
+// account (a registry gap) are still folded in for their CNPJ, so a duplicate código that never
+// got a conta contábil assigned can still be merged into its company's totals below.
 function buildRegistryIndex(entries) {
   const byCode = new Map();
   for (const entry of entries) {
     const code = normalizeAccountCode(entry.code);
-    if (!code || !entry.account) continue;
+    if (!code) continue;
     let group = byCode.get(code);
     if (!group) {
-      group = { byLoja: new Map(), accounts: new Set(), name: '' };
+      group = { byLoja: new Map(), accounts: new Set(), name: '', cnpjRoot: '' };
       byCode.set(code, group);
     }
-    const loja = normalizeAccountCode(entry.loja || '');
-    if (loja && !group.byLoja.has(loja)) group.byLoja.set(loja, entry.account);
-    group.accounts.add(entry.account);
+    if (entry.account) {
+      const loja = normalizeAccountCode(entry.loja || '');
+      if (loja && !group.byLoja.has(loja)) group.byLoja.set(loja, entry.account);
+      group.accounts.add(entry.account);
+    }
     if (!group.name && entry.name) group.name = entry.name;
+    if (!group.cnpjRoot && entry.cnpjRoot) group.cnpjRoot = entry.cnpjRoot;
   }
   return byCode;
+}
+
+// Maps each known conta contábil to its company's CNPJ root, so a balancete leaf account can be
+// folded into the same company-level group as every código that shares that CNPJ.
+function buildAccountToCnpjRoot(entries) {
+  const map = new Map();
+  for (const entry of entries) {
+    if (!entry.account || !entry.cnpjRoot) continue;
+    const account = normalizeAccountCode(entry.account);
+    if (!map.has(account)) map.set(account, entry.cnpjRoot);
+  }
+  return map;
 }
 
 // Resolves the conta contábil for a client total entry. When every loja of that código shares
@@ -172,6 +214,13 @@ function resolveClientAccount(group, loja) {
  * spreadsheets), each client code is first resolved to its conta contábil via a VLOOKUP-style
  * lookup against the client registry ("Cadastro de Clientes"), and only then matched against the
  * balancete by account.
+ *
+ * The same real company is often registered under several different códigos — one per
+ * branch/CNPJ suffix, sometimes with a duplicate that never got a conta contábil assigned — which
+ * would otherwise show up as separate, spuriously mismatched lines. Whenever a CNPJ root is known
+ * (for either side), it takes over as the reconciliation key instead of the bare conta contábil,
+ * folding every account and código that share it into one company-level total; the account is
+ * used as the key only when no CNPJ is available for that entry.
  */
 export function reconcileClients(balanceteEntries, clientTotalEntries, clientRegistryEntries) {
   const leafEntries = filterLeafAccounts(classifyNationality(balanceteEntries));
@@ -180,9 +229,15 @@ export function reconcileClients(balanceteEntries, clientTotalEntries, clientReg
     leafEntries.filter((e) => !e.national).map((e) => normalizeAccountCode(e.account))
   );
 
-  const balancete = aggregateByKey(nationalLeaf, (e) => normalizeAccountCode(e.account));
-
   const registryIndex = buildRegistryIndex(clientRegistryEntries);
+  const accountToCnpjRoot = buildAccountToCnpjRoot(clientRegistryEntries);
+
+  const balancete = aggregateWithAccounts(
+    nationalLeaf,
+    (e) => accountToCnpjRoot.get(normalizeAccountCode(e.account)) || normalizeAccountCode(e.account),
+    (e) => e.account
+  );
+
   const totalsByCode = aggregateByKey(clientTotalEntries, (e) => normalizeAccountCode(e.code));
   const totalsByCodeLoja = aggregateByKey(
     clientTotalEntries,
@@ -194,22 +249,36 @@ export function reconcileClients(balanceteEntries, clientTotalEntries, clientReg
   let discardedInternational = 0;
   for (const entry of totalsByCodeLoja.values()) {
     const group = registryIndex.get(normalizeAccountCode(entry.code));
-    const account = resolveClientAccount(group, normalizeAccountCode(entry.loja || ''));
-    if (!account) {
+    if (!group) {
       unresolved.push(entry);
       continue;
     }
+    const account = resolveClientAccount(group, normalizeAccountCode(entry.loja || ''));
     // The account is known to the balancete but explicitly outside the national-client
     // highlight — this is an international (or otherwise non-national) client, discarded
     // entirely rather than reported as a difference.
-    if (otherLeafAccounts.has(normalizeAccountCode(account))) {
+    if (account && otherLeafAccounts.has(normalizeAccountCode(account))) {
       discardedInternational++;
       continue;
     }
-    resolved.push({ account, name: entry.name || group.name, value: entry.value });
+    // Whenever a specific account is resolved, prefer the CNPJ root that account maps to on the
+    // balancete side over this código's own registry CNPJ. A conta contábil is occasionally
+    // reused by the client across a couple of unrelated códigos (their registry mistake, not
+    // rare enough to ignore) — deferring to the account's mapping keeps both sides of the
+    // reconciliation agreeing on the same group instead of splitting one balancete leaf in two.
+    // The código's own CNPJ is only the fallback when no account was resolved at all (the
+    // duplicate-registration gap this grouping exists to fix).
+    const groupKey = account
+      ? accountToCnpjRoot.get(normalizeAccountCode(account)) || normalizeAccountCode(account)
+      : group.cnpjRoot;
+    if (!groupKey) {
+      unresolved.push(entry);
+      continue;
+    }
+    resolved.push({ groupKey, account, name: entry.name || group.name, value: entry.value });
   }
 
-  const clients = aggregateByKey(resolved, (e) => normalizeAccountCode(e.account));
+  const clients = aggregateWithAccounts(resolved, (e) => e.groupKey, (e) => e.account);
 
   const matched = [];
   const differences = [];
