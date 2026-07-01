@@ -1860,14 +1860,36 @@ function buildClientColumnMap(headerRow) {
   return map;
 }
 
-function findClientDataSheet(workbook, requiredKeySets) {
+// Some "Clientes" exports bundle several sheets sharing the exact same header (e.g. a duplicate
+// draft sheet, or a copy renamed by the accountant while preparing the reconciliation) alongside
+// helper sheets with pre-computed pivots. When several sheets match the required columns, a
+// preferred sheet name — matched case/accent-insensitively — breaks the tie: an exact name match
+// wins over a substring match, which wins over the first sheet found (the prior, order-only
+// behavior, preserved for callers that don't pass a preference).
+function scoreClientSheetName(sheetName, preferredKeyword) {
+  if (!preferredKeyword) return 0;
+  const normalized = normalizeKey(sheetName);
+  if (normalized === preferredKeyword) return 2;
+  if (normalized.includes(preferredKeyword)) return 1;
+  return 0;
+}
+
+function findClientDataSheet(workbook, requiredKeySets, preferredKeyword) {
+  let best = null;
+  let bestScore = -1;
   for (const sheetName of workbook.SheetNames) {
     const sheet = workbook.Sheets[sheetName];
     const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true, defval: '' });
     const headerIdx = findClientHeaderRow(rows, requiredKeySets);
-    if (headerIdx !== -1) return { rows, headerIdx };
+    if (headerIdx === -1) continue;
+
+    const score = scoreClientSheetName(sheetName, preferredKeyword);
+    if (score > bestScore) {
+      bestScore = score;
+      best = { rows, headerIdx };
+    }
   }
-  return null;
+  return best;
 }
 
 // Parses the "Cadastro de Clientes" spreadsheet into a code -> account lookup table.
@@ -1906,7 +1928,7 @@ function parseClientRegistry(arrayBuffer) {
 function parseClientTotals(arrayBuffer) {
   const workbook = XLSX.read(arrayBuffer, { type: 'array', cellDates: false });
 
-  const dataSheet = findClientDataSheet(workbook, [CLI_CODE_KEYS, CLI_VALUE_KEYS]);
+  const dataSheet = findClientDataSheet(workbook, [CLI_CODE_KEYS, CLI_VALUE_KEYS], 'posicao dos titulos');
   if (!dataSheet) {
     throw new Error('Não foi possível identificar as colunas de Código do Cliente e Total na planilha de clientes.');
   }
@@ -2113,13 +2135,72 @@ function resolveClientAccount(group, loja) {
   return null;
 }
 
+// A subtotal/leaf description that unambiguously names the group as national or international
+// (the standard TOTVS Protheus wording, e.g. "CLIENTES NACIONAIS" / "CLIENTES INTERNACIONAIS").
+// Requires "cliente" together with the nationality word — the same balancete usually also has a
+// "FORNECEDORES NACIONAIS" group (accounts payable), and matching "nacion" alone would wrongly
+// pull every supplier account into the client reconciliation. Returns true/false when the
+// description is definitive, or null when it says nothing about client nationality (e.g. an
+// individual client's own name, or an unrelated GL group like "ATIVO" or "FORNECEDORES").
+function clientDescriptionNationalityHint(name) {
+  const text = normalizeKey(name);
+  if (!text || !text.includes('cliente')) return null;
+  if (/internacion|exterior/.test(text)) return false;
+  if (/nacion/.test(text)) return true;
+  return null;
+}
+
+// The balancete's fill-color highlight is the primary signal for national clients, but it isn't
+// always preserved — a re-export or a resave through another tool can silently drop cell
+// formatting while keeping every value intact. As a fallback, this walks each entry's ancestor
+// chain (by account hierarchy) looking for the nearest subtotal whose description names the
+// group as national/international, and uses that when the color signal is absent. The color
+// signal still wins whenever it's present, since it's the more specific, per-client-validated
+// convention.
+//
+// Only subtotal rows (accounts that are themselves an ancestor of some other account) are
+// eligible to contribute a hint — a leaf's own description is the individual client's name, which
+// can coincidentally contain the same words (e.g. "ADTOS CLIENTES NACIONAIS", an unrelated
+// liability account for client advances) without being part of the receivables group at all.
+function classifyClientNationality(entries) {
+  const segmentsList = entries.map((e) => getClientAccountSegments(e.account));
+  const isSubtotal = entries.map((_, j) => {
+    const aSegments = segmentsList[j];
+    return segmentsList.some(
+      (bSegments, i) => i !== j && bSegments.length > aSegments.length && aSegments.every((seg, k) => seg === bSegments[k])
+    );
+  });
+  const hints = entries.map((e, i) => (isSubtotal[i] ? clientDescriptionNationalityHint(e.name) : null));
+
+  return entries.map((entry, i) => {
+    if (entry.national) return { ...entry, national: true };
+    if (hints[i] === true) return { ...entry, national: true };
+    if (hints[i] === false) return { ...entry, national: false };
+
+    const bSegments = segmentsList[i];
+    let bestDepth = -1;
+    let bestHint = null;
+    for (let j = 0; j < entries.length; j++) {
+      if (j === i || hints[j] === null) continue;
+      const aSegments = segmentsList[j];
+      if (aSegments.length >= bSegments.length) continue;
+      if (!aSegments.every((seg, k) => seg === bSegments[k])) continue;
+      if (aSegments.length > bestDepth) {
+        bestDepth = aSegments.length;
+        bestHint = hints[j];
+      }
+    }
+    return { ...entry, national: bestHint === true };
+  });
+}
+
 // Reconciles balancete contábil balances against the clients totals spreadsheet, restricted to
 // national clients — international clients are discarded from the result entirely. Since the
 // totals spreadsheet identifies clients by code (not by account or by name), each client code is
 // first resolved to its conta contábil via a VLOOKUP-style lookup against the client registry,
 // and only then matched against the balancete by account.
 function reconcileClients(balanceteEntries, clientTotalEntries, clientRegistryEntries) {
-  const leafEntries = filterClientLeafAccounts(balanceteEntries);
+  const leafEntries = filterClientLeafAccounts(classifyClientNationality(balanceteEntries));
   const nationalLeaf = leafEntries.filter((e) => e.national);
   const otherLeafAccounts = new Set(
     leafEntries.filter((e) => !e.national).map((e) => normalizeAccountCode(e.account))

@@ -80,16 +80,36 @@ function buildColumnMap(headerRow) {
   return map;
 }
 
-function findDataSheet(workbook, requiredKeySets) {
+// Some "Clientes" exports bundle several sheets sharing the exact same header (e.g. a duplicate
+// draft sheet, or a copy renamed by the accountant while preparing the reconciliation) alongside
+// helper sheets with pre-computed pivots. When several sheets match the required columns, a
+// preferred sheet name — matched case/accent-insensitively — breaks the tie: an exact name match
+// wins over a substring match, which wins over the first sheet found (the prior, order-only
+// behavior, preserved for callers that don't pass a preference).
+function scoreSheetName(sheetName, preferredKeyword) {
+  if (!preferredKeyword) return 0;
+  const normalized = normalizeKey(sheetName);
+  if (normalized === preferredKeyword) return 2;
+  if (normalized.includes(preferredKeyword)) return 1;
+  return 0;
+}
+
+function findDataSheet(workbook, requiredKeySets, preferredKeyword) {
+  let best = null;
+  let bestScore = -1;
   for (const sheetName of workbook.SheetNames) {
     const sheet = workbook.Sheets[sheetName];
     const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true, defval: '' });
     const headerIdx = findHeaderRow(rows, requiredKeySets);
-    if (headerIdx !== -1) {
-      return { rows, headerIdx };
+    if (headerIdx === -1) continue;
+
+    const score = scoreSheetName(sheetName, preferredKeyword);
+    if (score > bestScore) {
+      bestScore = score;
+      best = { rows, headerIdx };
     }
   }
-  return null;
+  return best;
 }
 
 /**
@@ -136,7 +156,7 @@ export function parseClientRegistry(buffer) {
 export function parseClientTotals(buffer) {
   const workbook = XLSX.read(buffer, { type: 'buffer', cellDates: false });
 
-  const dataSheet = findDataSheet(workbook, [CODE_KEYS, VALUE_KEYS]);
+  const dataSheet = findDataSheet(workbook, [CODE_KEYS, VALUE_KEYS], 'posicao dos titulos');
   if (!dataSheet) {
     throw new Error(
       'Não foi possível identificar as colunas de Código do Cliente e Total na planilha de clientes.'

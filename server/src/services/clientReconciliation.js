@@ -1,4 +1,4 @@
-import { normalizeAccountCode } from '../utils/normalize.js';
+import { normalizeAccountCode, normalizeKey } from '../utils/normalize.js';
 
 const AMOUNT_TOLERANCE = 0.01;
 
@@ -55,6 +55,65 @@ function filterLeafAccounts(entries) {
         (other, j) => j !== i && isAncestorOf(segmentsList[i], other, rawList[i], rawList[j])
       )
   );
+}
+
+// A subtotal/leaf description that unambiguously names the group as national or international
+// (the standard TOTVS Protheus wording, e.g. "CLIENTES NACIONAIS" / "CLIENTES INTERNACIONAIS").
+// Requires "cliente" together with the nationality word — the same balancete usually also has a
+// "FORNECEDORES NACIONAIS" group (accounts payable), and matching "nacion" alone would wrongly
+// pull every supplier account into the client reconciliation. Returns true/false when the
+// description is definitive, or null when it says nothing about client nationality (e.g. an
+// individual client's own name, or an unrelated GL group like "ATIVO" or "FORNECEDORES").
+function descriptionNationalityHint(name) {
+  const text = normalizeKey(name);
+  if (!text || !text.includes('cliente')) return null;
+  if (/internacion|exterior/.test(text)) return false;
+  if (/nacion/.test(text)) return true;
+  return null;
+}
+
+// The balancete's fill-color highlight is the primary signal for national clients, but it isn't
+// always preserved — a re-export or a resave through another tool can silently drop cell
+// formatting while keeping every value intact. As a fallback, this walks each entry's ancestor
+// chain (by account hierarchy) looking for the nearest subtotal whose description names the
+// group as national/international, and uses that when the color signal is absent. The color
+// signal still wins whenever it's present, since it's the more specific, per-client-validated
+// convention.
+//
+// Only subtotal rows (accounts that are themselves an ancestor of some other account) are
+// eligible to contribute a hint — a leaf's own description is the individual client's name, which
+// can coincidentally contain the same words (e.g. "ADTOS CLIENTES NACIONAIS", an unrelated
+// liability account for client advances) without being part of the receivables group at all.
+function classifyNationality(entries) {
+  const segmentsList = entries.map((e) => getAccountSegments(e.account));
+  const isSubtotal = entries.map((_, j) => {
+    const aSegments = segmentsList[j];
+    return segmentsList.some(
+      (bSegments, i) => i !== j && bSegments.length > aSegments.length && aSegments.every((seg, k) => seg === bSegments[k])
+    );
+  });
+  const hints = entries.map((e, i) => (isSubtotal[i] ? descriptionNationalityHint(e.name) : null));
+
+  return entries.map((entry, i) => {
+    if (entry.national) return { ...entry, national: true };
+    if (hints[i] === true) return { ...entry, national: true };
+    if (hints[i] === false) return { ...entry, national: false };
+
+    const bSegments = segmentsList[i];
+    let bestDepth = -1;
+    let bestHint = null;
+    for (let j = 0; j < entries.length; j++) {
+      if (j === i || hints[j] === null) continue;
+      const aSegments = segmentsList[j];
+      if (aSegments.length >= bSegments.length) continue;
+      if (!aSegments.every((seg, k) => seg === bSegments[k])) continue;
+      if (aSegments.length > bestDepth) {
+        bestDepth = aSegments.length;
+        bestHint = hints[j];
+      }
+    }
+    return { ...entry, national: bestHint === true };
+  });
 }
 
 // Aggregates entries by a derived key, summing values for entries that share the same key.
@@ -115,7 +174,7 @@ function resolveClientAccount(group, loja) {
  * balancete by account.
  */
 export function reconcileClients(balanceteEntries, clientTotalEntries, clientRegistryEntries) {
-  const leafEntries = filterLeafAccounts(balanceteEntries);
+  const leafEntries = filterLeafAccounts(classifyNationality(balanceteEntries));
   const nationalLeaf = leafEntries.filter((e) => e.national);
   const otherLeafAccounts = new Set(
     leafEntries.filter((e) => !e.national).map((e) => normalizeAccountCode(e.account))
