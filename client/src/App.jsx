@@ -18,9 +18,12 @@ function App() {
       <header className="bg-white border-b border-gray-200 shadow-sm">
         <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
           <img src={logo} alt="PKF Brazil" className="h-10" />
-          <h1 className="text-pkf-navy text-xl font-semibold hidden sm:block">
-            Automação de Conciliações
-          </h1>
+          <div className="hidden sm:block text-right">
+            <h1 className="text-pkf-navy text-xl font-semibold leading-tight">
+              Automação de Conciliações
+            </h1>
+            <p className="text-xs text-gray-400 tracking-wide">TOTVS Protheus</p>
+          </div>
         </div>
         <div className="h-1.5 w-full flex">
           <div className="flex-1 bg-pkf-magenta" />

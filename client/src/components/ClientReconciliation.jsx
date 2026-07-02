@@ -111,21 +111,21 @@ export default function ClientReconciliation() {
         <div className="flex flex-col sm:flex-row gap-4 mb-6">
           <FileUploadField
             label="Balancete Contábil"
-            hint="Excel (.xlsx, .xls) — clientes nacionais pintados de amarelo"
+            hint="Excel (.xlsx, .xls)"
             accept=".xlsx,.xls"
             file={balanceteFile}
             onChange={setBalanceteFile}
           />
           <FileUploadField
-            label="Planilha de Clientes"
-            hint="Excel (.xlsx, .xls) — código e coluna TOTAL"
+            label="Planilha do Financeiro"
+            hint="Excel (.xlsx, .xls)"
             accept=".xlsx,.xls"
             file={clientsFile}
             onChange={setClientsFile}
           />
           <FileUploadField
             label="Cadastro de Clientes"
-            hint="Excel (.xlsx, .xls) — código e conta contábil"
+            hint="Excel (.xlsx, .xls)"
             accept=".xlsx,.xls"
             file={registryFile}
             onChange={setRegistryFile}
