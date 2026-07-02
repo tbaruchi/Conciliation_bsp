@@ -1,10 +1,6 @@
-import { normalizeAccountCode } from '../utils/normalize.js';
+import { normalizeAccountCode, normalizeKey } from '../utils/normalize.js';
 
 const AMOUNT_TOLERANCE = 0.01;
-
-// Only accounts under this classification group (Fornecedores a Pagar) are considered
-// from the balancete contábil; every other account is ignored.
-const SUPPLIER_GROUP_PREFIX = ['2', '1', '2'];
 
 function round(value) {
   return Math.round(value * 100) / 100;
@@ -34,15 +30,65 @@ function getRawAccountSegments(code) {
     .map((segment) => segment.toUpperCase());
 }
 
-// Checks whether an account belongs to the supplier group (starts with 2.1.2),
-// respecting the hierarchical structure of the code (so 2.1.20.x does not match 2.1.2.x).
-function isInSupplierGroup(account) {
-  const segments = getAccountSegments(account);
-  if (segments.length >= SUPPLIER_GROUP_PREFIX.length) {
-    return SUPPLIER_GROUP_PREFIX.every((seg, i) => segments[i] === seg);
-  }
-  // Fallback for flat (non-hierarchical/non-separated) account codes.
-  return segments.join('').startsWith(SUPPLIER_GROUP_PREFIX.join(''));
+// A subtotal description that names the group as suppliers (the standard TOTVS Protheus wording,
+// e.g. "FORNECEDORES", "FORNECEDORES NACIONAIS", "FORNECEDORES ESTRANGEIROS"). Different clients
+// place this group under a different account prefix (seen at "2.1.2" for one client and "2.1.3"
+// for another) — matching by description instead of a hardcoded prefix generalizes across them.
+//
+// A bare "FORNECEDORES" with no nationality qualifier is treated as national — some clients'
+// chart of accounts doesn't separate foreign suppliers into their own branch at all, and in that
+// case there's nothing to exclude.
+function descriptionSupplierGroupHint(name) {
+  const text = normalizeKey(name);
+  if (!text.includes('fornecedor')) return null;
+  if (/estrangeir|exterior|internacion/.test(text)) return { inGroup: true, national: false };
+  return { inGroup: true, national: true };
+}
+
+// Classifies every balancete entry as belonging to the supplier group or not — and, when it does,
+// whether it's specifically the national or foreign/estrangeiro sub-branch — by walking each
+// entry's ancestor chain (by account hierarchy) for the nearest subtotal whose description names
+// it as a fornecedores group. Only subtotal rows (accounts that are themselves an ancestor of
+// some other account) are eligible to contribute a hint — a leaf's own description is the
+// individual supplier's name, which can coincidentally contain "fornecedor" (e.g. "ADTO A
+// FORNECEDORES NACIONAIS", an unrelated advances-to-suppliers asset account) without being part
+// of the accounts-payable group itself.
+//
+// A hint is also only trusted from the liability side of the chart of accounts (the top-level
+// segment used for Passivo, "2" in every TOTVS Protheus client seen so far). "Fornecedores a
+// Pagar" — what's owed to suppliers — is a liability; "Adiantamentos a Fornecedores" — advances
+// already paid to suppliers — is an asset with its own subtotal/children and literally contains
+// "fornecedores" in its description too, so without this guard it would be wrongly folded in.
+function classifySupplierGroup(entries) {
+  const segmentsList = entries.map((e) => getAccountSegments(e.account));
+  const isSubtotal = entries.map((_, j) => {
+    const aSegments = segmentsList[j];
+    return segmentsList.some(
+      (bSegments, i) => i !== j && bSegments.length > aSegments.length && aSegments.every((seg, k) => seg === bSegments[k])
+    );
+  });
+  const hints = entries.map((e, i) =>
+    isSubtotal[i] && segmentsList[i][0] === '2' ? descriptionSupplierGroupHint(e.name) : null
+  );
+
+  return entries.map((entry, i) => {
+    if (hints[i]) return hints[i];
+
+    const bSegments = segmentsList[i];
+    let bestDepth = -1;
+    let bestHint = null;
+    for (let j = 0; j < entries.length; j++) {
+      if (j === i || !hints[j]) continue;
+      const aSegments = segmentsList[j];
+      if (aSegments.length >= bSegments.length) continue;
+      if (!aSegments.every((seg, k) => seg === bSegments[k])) continue;
+      if (aSegments.length > bestDepth) {
+        bestDepth = aSegments.length;
+        bestHint = hints[j];
+      }
+    }
+    return bestHint || { inGroup: false, national: false };
+  });
 }
 
 function isAncestorOf(aSegments, bSegments, aRaw, bRaw) {
@@ -126,16 +172,25 @@ function resolveSupplierAccount(group, loja) {
 
 /**
  * Reconciles "balancete contábil" account balances against the suppliers ("fornecedores")
- * spreadsheet totals. Since the totals spreadsheet identifies suppliers by code (not by
- * account or by name — names may diverge between spreadsheets), each supplier code is first
- * resolved to its conta contábil via a VLOOKUP-style lookup against the supplier registry
- * ("Cadastro de Fornecedores"), and only then matched against the balancete by account.
+ * spreadsheet totals, restricted to national suppliers — foreign/estrangeiro suppliers are
+ * discarded from the result entirely, mirroring the client reconciliation (their AP aging report
+ * commonly has no titles at all for foreign suppliers, since those are settled outside the local
+ * duplicata/título flow this report tracks). Since the totals spreadsheet identifies suppliers by
+ * code (not by account or by name — names may diverge between spreadsheets), each supplier code
+ * is first resolved to its conta contábil via a VLOOKUP-style lookup against the supplier
+ * registry ("Cadastro de Fornecedores"), and only then matched against the balancete by account.
  */
 export function reconcileSuppliers(balanceteEntries, supplierTotalEntries, supplierRegistryEntries) {
-  const supplierGroupEntries = balanceteEntries.filter((e) => isInSupplierGroup(e.account));
+  const classified = classifySupplierGroup(balanceteEntries);
+  const combined = balanceteEntries.map((entry, i) => ({ ...entry, ...classified[i] }));
+  const leafEntries = filterLeafAccounts(combined.filter((e) => e.inGroup));
+
   const balancete = aggregateByKey(
-    filterLeafAccounts(supplierGroupEntries),
+    leafEntries.filter((e) => e.national),
     (e) => normalizeAccountCode(e.account)
+  );
+  const otherLeafAccounts = new Set(
+    leafEntries.filter((e) => !e.national).map((e) => normalizeAccountCode(e.account))
   );
 
   const registryIndex = buildRegistryIndex(supplierRegistryEntries);
@@ -147,14 +202,21 @@ export function reconcileSuppliers(balanceteEntries, supplierTotalEntries, suppl
 
   const resolved = [];
   const unresolved = [];
+  let discardedForeign = 0;
   for (const entry of totalsByCodeLoja.values()) {
     const group = registryIndex.get(normalizeAccountCode(entry.code));
     const account = resolveSupplierAccount(group, normalizeAccountCode(entry.loja || ''));
     if (!account) {
       unresolved.push(entry);
-    } else {
-      resolved.push({ account, name: entry.name || group.name, value: entry.value });
+      continue;
     }
+    // The account is known to the balancete but explicitly outside the national-supplier
+    // branch — a foreign supplier, discarded entirely rather than reported as a difference.
+    if (otherLeafAccounts.has(normalizeAccountCode(account))) {
+      discardedForeign++;
+      continue;
+    }
+    resolved.push({ account, name: entry.name || group.name, value: entry.value });
   }
 
   const suppliers = aggregateByKey(resolved, (e) => normalizeAccountCode(e.account));
@@ -223,6 +285,7 @@ export function reconcileSuppliers(balanceteEntries, supplierTotalEntries, suppl
     totalSuppliers: totalsByCode.size,
     totalRegistry: registryIndex.size,
     totalUnresolved: unresolved.length,
+    totalDiscardedForeign: discardedForeign,
     totalMatched: matched.length,
     totalDifferences: differences.length,
     sumBalancete: round(sumValues(balancete)),

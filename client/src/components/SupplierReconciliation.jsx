@@ -3,7 +3,17 @@ import FileUploadField from './FileUploadField';
 
 const currency = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
 
+// The reconciliation logic is fully generic (account group and nationality are both detected
+// from the balancete's own descriptions), so this list exists purely so the combo box can show
+// which clients have already been validated against real files.
+const SUPPLIER_PROFILES = [
+  { id: 'sh', label: 'SH do Brasil' },
+  { id: 'emuge', label: 'EMUGE-FRANKEN' },
+  { id: 'iwaki', label: 'IWAKI do Brasil' },
+];
+
 export default function SupplierReconciliation() {
+  const [supplierProfile, setSupplierProfile] = useState(SUPPLIER_PROFILES[0].id);
   const [balanceteFile, setBalanceteFile] = useState(null);
   const [suppliersFile, setSuppliersFile] = useState(null);
   const [registryFile, setRegistryFile] = useState(null);
@@ -20,6 +30,7 @@ export default function SupplierReconciliation() {
     setResult(null);
 
     const formData = new FormData();
+    formData.append('supplierProfile', supplierProfile);
     formData.append('balancete', balanceteFile);
     formData.append('suppliers', suppliersFile);
     formData.append('registry', registryFile);
@@ -76,8 +87,27 @@ export default function SupplierReconciliation() {
           Envie o balancete contábil, a planilha de fornecedores e o cadastro de fornecedores. O código do
           fornecedor é localizado no cadastro (PROCV) para obter a conta contábil correspondente, e a
           conciliação é feita por conta contábil — os nomes não são usados na comparação, pois podem
-          divergir entre as planilhas.
+          divergir entre as planilhas. Somente fornecedores nacionais são conciliados — fornecedores
+          estrangeiros são descartados do resultado.
         </p>
+
+        <div className="mb-6 max-w-xs">
+          <label className="block text-sm font-medium text-gray-700 mb-1" htmlFor="supplier-profile">
+            Cliente
+          </label>
+          <select
+            id="supplier-profile"
+            value={supplierProfile}
+            onChange={(e) => setSupplierProfile(e.target.value)}
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-pkf-navy/30 cursor-pointer"
+          >
+            {SUPPLIER_PROFILES.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.label}
+              </option>
+            ))}
+          </select>
+        </div>
 
         <div className="flex flex-col sm:flex-row gap-4 mb-6">
           <FileUploadField
@@ -130,6 +160,12 @@ export default function SupplierReconciliation() {
               color="cyan"
             />
           </div>
+
+          {result.summary.totalDiscardedForeign > 0 && (
+            <p className="text-xs text-gray-400">
+              {result.summary.totalDiscardedForeign} fornecedor(es) estrangeiro(s) descartado(s) do resultado.
+            </p>
+          )}
 
           <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
             <div className="flex items-center justify-between mb-4">

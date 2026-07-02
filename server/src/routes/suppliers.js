@@ -9,12 +9,27 @@ import { buildSupplierReconciliationWorkbook } from '../services/exportExcel.js'
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
 
+// The reconciliation logic itself is fully generic (account group and nationality are both
+// detected from the balancete's own descriptions, not a hardcoded prefix or per-client rule), so
+// this registry exists purely so the combo box can show which clients have already been
+// validated against real files — a reminder of what's been tested, not a functional switch.
+const SUPPLIER_PROFILES = {
+  sh: { label: 'SH do Brasil' },
+  emuge: { label: 'EMUGE-FRANKEN' },
+  iwaki: { label: 'IWAKI do Brasil' },
+};
+
 function checkExcel(file, label) {
   const ext = path.extname(file.originalname).toLowerCase();
   if (ext !== '.xlsx' && ext !== '.xls') {
     throw new Error(`${label} deve estar em formato Excel (.xlsx ou .xls).`);
   }
 }
+
+router.get('/profiles', (req, res) => {
+  const profiles = Object.entries(SUPPLIER_PROFILES).map(([id, profile]) => ({ id, label: profile.label }));
+  res.json({ profiles });
+});
 
 router.post(
   '/reconcile',
